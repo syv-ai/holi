@@ -51,7 +51,6 @@ import {
   Video,
   X,
 } from 'lucide-react'
-import { toast } from 'sonner'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
   activeRemoteAtom,
@@ -100,12 +99,13 @@ import type { ComposeIntent } from './compose-intent'
 import { listStamp, messageStamp } from './mail-stamp'
 import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from './mail-types'
 import { googleCap } from './google-cap'
-import { explainWriteFailure, isDisconnected } from './google-errors'
+import { explainWriteFailure } from './google-errors'
 import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
 import { useGoogleAccount } from './account'
 import { useMailMarkers } from './use-mail-markers'
 import { useMailMarkerActions } from './use-mail-marker-actions'
 import { MailMarkerRetry, MailMarkerStatus } from './mail-marker-icon'
+import { useMailList } from './mail/use-mail-list'
 
 interface ThreadSummary {
   id: string
@@ -160,25 +160,14 @@ interface MailCounts {
   total: number
 }
 
-type ListState =
-  | { kind: 'loading' }
-  | {
-      kind: 'ready'
-      threads: ThreadSummary[]
-      /** null when Gmail says there is nothing further. */
-      nextPageToken: string | null
-      /** When these threads were obtained from Google, ISO. */
-      syncedAt: string
-    }
-  | { kind: 'disconnected' }
-  | { kind: 'error'; message: string }
-
-export function MailView() {
+export function MailView({ visible = true }: { visible?: boolean } = {}) {
   const { currentSub } = useGoogleAccount()
-  return <MailViewAccount key={currentSub ?? 'disconnected'} accountSub={currentSub} />
+  return (
+    <MailViewAccount key={currentSub ?? 'disconnected'} accountSub={currentSub} visible={visible} />
+  )
 }
 
-function MailViewAccount({ accountSub }: { accountSub: string | null }) {
+function MailViewAccount({ accountSub, visible }: { accountSub: string | null; visible: boolean }) {
   const [query, setQuery] = useState('')
   /** The query actually fetched, separate from the input so typing does not
    *  fire a request per keystroke against a rate-limited API. */
@@ -190,13 +179,9 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   /** The thread's scroller. What actually moves when find steps to a match: the
    *  match itself is inside a frame that never scrolls. */
   const readerRef = useRef<HTMLDivElement>(null)
-  const [list, setList] = useState<ListState>({ kind: 'loading' })
-  const [counts, setCounts] = useState<MailCounts | null>(null)
   /** The address book, fetched once and filtered locally, so completing from it
    *  does not cost a request per keystroke. */
   const [contacts, setContacts] = useState<MailAddress[]>([])
-  /** Why the last triage action did not stick. Cleared on the next attempt. */
-  const [writeError, setWriteError] = useState<string | null>(null)
   const [open, setOpen] = useState<Thread | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
@@ -223,16 +208,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
    *  FROM. `null` before anything has been picked, when a shift-click can only
    *  mean "select this one". */
   const [anchor, setAnchor] = useState<string | null>(null)
-  const [loadingMore, setLoadingMore] = useState(false)
-  /** Unread per Gmail tab. `null` until the picker is first opened: five
-   *  requests is too much for a dropdown nobody has touched. */
-  const [categoryCounts, setCategoryCounts] = useState<CategoryCounts | null>(null)
-  /**
-   * Bumped by everything that replaces the list, so a failed optimistic write
-   * knows whether its undo is still valid. See `write`.
-   */
-  const listGeneration = useRef(0)
-  /** The inline composer's intent, or `null` when it is closed. */
+  /** The inline composer's intent, or null when it is closed. */
   const [composing, setComposing] = useState<ComposeIntent | null>(null)
   const composerRef = useRef<MailComposerHandle | null>(null)
   const composeGate = useRef(new ComposeSessionGate()).current
@@ -262,34 +238,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       remote === null ? Promise.reject(new Error('No vault is open.')) : work(remote),
     [remote],
   )
-  const markers = useMailMarkers({
-    remote,
-    accountSub,
-    ids: [
-      ...(list.kind === 'ready' ? list.threads.map((thread) => thread.id) : []),
-      ...(openId === null ? [] : [openId]),
-    ],
-  })
-  const markerActions = useMailMarkerActions({
-    remote,
-    accountSub,
-    activeThreadId: openId,
-    reconcile: (id) => markers.invalidate([id]),
-    onFailure: (cause) => setWriteError(explainWriteFailure(cause)),
-    onChange: (id, state) => {
-      listGeneration.current++
-      setList((previous) =>
-        previous.kind === 'ready'
-          ? {
-              ...previous,
-              threads: previous.threads.map((thread) =>
-                thread.id === id ? { ...thread, starred: state.starred } : thread,
-              ),
-            }
-          : previous,
-      )
-    },
-  })
   const openNote = useSetAtom(openDocumentAtom)
   const openSettingsSection = useSetAtom(openSettingsSectionAtom)
   /** Where Google is connected: the Connections section of Settings. */
@@ -352,48 +300,49 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   const mailbox = searching || view.kind !== 'sent' ? undefined : ('sent' as const)
   const unreadFilter = view.kind === 'category' && unreadOnly ? true : undefined
 
-  const load = useCallback(() => {
-    setList({ kind: 'loading' })
-    listGeneration.current++
-    void call((r) =>
-      googleCap.search(r, { query: submitted, category: filter, unread: unreadFilter, mailbox }),
-    )
-      .then((page) =>
-        setList({
-          kind: 'ready',
-          threads: page.threads,
-          nextPageToken: page.nextPageToken,
-          syncedAt: page.syncedAt,
-        }),
-      )
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : 'Could not load your mail.'
-        setList(isDisconnected(err) ? { kind: 'disconnected' } : { kind: 'error', message })
-      })
-  }, [submitted, filter, unreadFilter, mailbox, call])
-
-  useEffect(load, [load])
-
-  /** The footer's numbers. One request, and a failure leaves the footer
-   *  numberless rather than the list broken. */
-  const loadCounts = useCallback(() => {
-    void call((r) => googleCap.mailCounts(r))
-      .then(setCounts)
-      .catch(() => setCounts(null))
-  }, [call])
-
-  useEffect(loadCounts, [loadCounts])
-
-  /**
-   * Unread per tab, **on demand**: five requests, not spent until the picker is
-   * first opened. Once opened, they refresh with everything else.
-   */
-  const loadCategoryCounts = useCallback(() => {
-    void call((r) => googleCap.categoryCounts(r))
-      .then(setCategoryCounts)
-      // The tabs still work with no numbers on them.
-      .catch(() => setCategoryCounts(null))
-  }, [call])
+  const params = useMemo(
+    () => ({ query: submitted, category: filter, unread: unreadFilter, mailbox }),
+    [submitted, filter, unreadFilter, mailbox],
+  )
+  const mailList = useMailList({
+    remote,
+    account: accountSub,
+    visible,
+    drafts: showDrafts && !searching,
+    supported: !searching && !showDrafts,
+    params,
+  })
+  const {
+    list,
+    counts,
+    categoryCounts,
+    loadingMore,
+    writeError,
+    load,
+    loadMore,
+    write,
+    loadCategoryCounts,
+    reportError: setWriteError,
+  } = mailList
+  const markers = useMailMarkers({
+    remote,
+    accountSub,
+    ids: [
+      ...(list.kind === 'ready' ? list.threads.map((thread) => thread.id) : []),
+      ...(openId === null ? [] : [openId]),
+    ],
+  })
+  const markerActions = useMailMarkerActions({
+    scope: JSON.stringify([view, unreadOnly, submitted]),
+    enabled: visible,
+    remote,
+    accountSub,
+    activeThreadId: openId,
+    reconcile: (id) => markers.invalidate([id]),
+    onFailure: (cause) => setWriteError(explainWriteFailure(cause)),
+    runMutation: (mutate) => mailList.write(mutate),
+    onChange: (id, state) => mailList.markerChanged(id, state.starred),
+  })
 
   /**
    * The address book, once per mount.
@@ -574,38 +523,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   }
 
   /**
-   * The next page, **appended**. A button rather than an infinite scroller:
-   * Gmail is rate limited, and one trackpad flick would spend a minute's quota.
-   */
-  const loadMore = (pageToken: string) => {
-    setLoadingMore(true)
-    void call((r) =>
-      googleCap.search(r, {
-        query: submitted,
-        category: filter,
-        unread: unreadFilter,
-        mailbox,
-        pageToken,
-      }),
-    )
-      .then((page) => {
-        listGeneration.current++
-        setList((previous) =>
-          previous.kind === 'ready'
-            ? {
-                kind: 'ready',
-                threads: [...previous.threads, ...page.threads],
-                nextPageToken: page.nextPageToken,
-                syncedAt: page.syncedAt,
-              }
-            : previous,
-        )
-      })
-      // A failed "load more" leaves what is already on screen alone.
-      .finally(() => setLoadingMore(false))
-  }
-
-  /**
    * Open a thread.
    *
    * The row's **summary** is kept alongside the fetched thread: flags such as
@@ -636,55 +553,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       // Only when there is something to change: the API is rate limited.
       if (thread.unread) void setRead(thread.id, true)
     }, true)
-  }
-
-  /**
-   * A write, painted immediately and undone if Google refuses.
-   *
-   * **Optimism belongs here and nowhere below.** A revert costs a re-render and
-   * nothing is persisted. `main` touches the cache only once Google has agreed,
-   * because a cached write Google refused is a divergence the `history.list`
-   * delta sync can never find.
-   *
-   * The whole previous list is the undo for a REFUSED write, rather than an
-   * inverse per operation: a removed row goes back at its index. The user's
-   * own Undo, after Google agreed, is the inverse capability (see
-   * `removeThreads`).
-   *
-   * Resolves `true` once Google has agreed.
-   */
-  const write = async (
-    mutate: () => Promise<unknown>,
-    next: (threads: ThreadSummary[]) => ThreadSummary[],
-  ): Promise<boolean> => {
-    if (list.kind !== 'ready') return false
-    const snapshot = list.threads
-    const at = ++listGeneration.current
-    setWriteError(null)
-    setList((previous) =>
-      previous.kind === 'ready' ? { ...previous, threads: next(previous.threads) } : previous,
-    )
-    try {
-      await mutate()
-      return true
-    } catch (err: unknown) {
-      /**
-       * The snapshot is only a valid undo while nothing else has touched the
-       * list. Otherwise (another write in flight, a refresh after an archive)
-       * restoring it would discard the other change, so re-read instead.
-       */
-      if (listGeneration.current === at) {
-        setList((previous) =>
-          previous.kind === 'ready' ? { ...previous, threads: snapshot } : previous,
-        )
-      } else {
-        load()
-      }
-      // A silent revert is indistinguishable from the click never registering
-      // (e.g. a grant missing `gmail.modify`), so always say why.
-      setWriteError(explainWriteFailure(err))
-      return false
-    }
   }
 
   const setRead = (id: string, read: boolean) =>
@@ -737,24 +605,14 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
    * reappear.
    */
   const removeThreads = async (ids: readonly string[], kind: 'archive' | 'trash') => {
-    const done = await Promise.all(
+    const done = await Promise.allSettled(
       ids.map((id) => removeThread(id, () => call((r) => googleCap[kind](r, { id })))),
     )
-    const moved = ids.filter((_, index) => done[index])
+    const moved = ids.filter((_, index) => done[index]?.status === 'fulfilled' && done[index].value)
     if (moved.length === 0) return
-    const subject = moved.length === 1 ? 'Thread' : `${moved.length} threads`
-    toast(kind === 'archive' ? `${subject} archived` : `${subject} moved to Trash`, {
-      duration: Infinity,
-      closeButton: true,
-      action: {
-        label: 'Undo',
-        onClick: () => {
-          const inverse = kind === 'archive' ? googleCap.unarchive : googleCap.untrash
-          void Promise.all(moved.map((id) => call((r) => inverse(r, { id }))))
-            .catch((err: unknown) => setWriteError(explainWriteFailure(err)))
-            .finally(load)
-        },
-      },
+    mailList.offerRemovalUndo(kind, moved, (id) => {
+      const inverse = kind === 'archive' ? googleCap.unarchive : googleCap.untrash
+      return call((r) => inverse(r, { id }))
     })
   }
 
@@ -966,10 +824,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
               onRefresh={() => {
                 markers.invalidate()
                 load()
-                loadCounts()
-                // Only if already loaded: refresh must not be what first spends
-                // five requests on a dropdown.
-                if (categoryCounts !== null) loadCategoryCounts()
               }}
             />
           )}
@@ -1074,7 +928,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                   size="xs"
                   className="w-full"
                   disabled={loadingMore}
-                  onClick={() => loadMore(list.nextPageToken!)}
+                  onClick={loadMore}
                 >
                   {loadingMore ? 'Loading…' : 'Load more'}
                 </Button>
