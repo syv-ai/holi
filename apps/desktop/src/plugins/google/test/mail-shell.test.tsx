@@ -3,12 +3,15 @@
  * capabilities: what it asks Gmail for, what it shows, and that HTML bodies
  * still go through the sandboxed frame.
  */
-import { render, screen, waitFor, within } from '@/test/render'
+import { act, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { atom, getDefaultStore } from 'jotai'
+import { afterEach, beforeEach, expect, onTestFailed, test, vi } from 'vitest'
+import { atom, createStore, getDefaultStore, Provider } from 'jotai'
 import { activeRemoteAtom, saveBeforeClosing, sessionAtom } from '@/plugin-api'
 import { MailShell } from '../renderer/mail/mail-shell'
+import { MailView } from '../renderer/mail-view'
+import { refreshGoogleAtom } from '../renderer/account'
+import type { googleCap } from '../renderer/google-cap'
 import { mailCatchUpByVaultAtom } from '../renderer/mail/mail-catch-up'
 import { ConnectionsSection } from '../renderer/connections-section'
 import { resetMailImagesForTests } from '../renderer/mail-images'
@@ -20,6 +23,11 @@ const draftsMock = vi.fn()
 const saveDraftMock = vi.fn()
 const draftBodyMock = vi.fn()
 const markReadMock = vi.fn()
+const readAccountsMock = vi.fn<typeof googleCap.allAccounts>()
+const connectMock = vi.fn<typeof googleCap.connect>()
+const invitationMock = vi.fn<typeof googleCap.mailInvitation>()
+const respondMock = vi.fn<typeof googleCap.respondToMailInvitation>()
+const validateBinding = vi.fn<() => ReturnType<typeof googleCap.validateMailInvitationBinding>>()
 const starMock = vi.fn()
 const mailMarkersMock = vi.fn()
 const setMailMarkerMock = vi.fn()
@@ -30,6 +38,7 @@ const disconnectVaultMock = vi.fn()
 const removeAccountMock = vi.fn()
 const setClientMock = vi.fn()
 let accountSub = 'a'
+let accountBinding = 1
 const toastMock = vi.fn()
 const openExternal = vi.fn()
 const { agentStartMock, agentStopMock, agentServiceMock, tasksAvailabilityMock } = vi.hoisted(
@@ -50,28 +59,38 @@ vi.mock('@/plugin-api', async (importOriginal) => {
   }
 })
 
-const google: Record<string, (params: unknown) => unknown> = {
+const google: Record<string, (params: unknown, remote: string) => unknown> = {
   status: () => ({
     account:
-      accountSub === ''
-        ? null
-        : { email: accountSub === 'a' ? 'ada@syv.ai' : 'ada@home.test', sub: accountSub },
+      accountSub === '' ? null : { email: accountSub === 'a' ? 'ada@syv.ai' : 'ada@home.test' },
     missingScopes: [],
+    needsReconnect: false,
   }),
-  allAccounts: () => ({
-    accounts: [
-      { sub: 'a', email: 'ada@syv.ai' },
-      { sub: 'b', email: 'ada@home.test' },
-    ],
-    current: accountSub,
-  }),
+  allAccounts: (_p, remote) => readAccountsMock(remote),
+  connect: (_p, remote) => connectMock(remote),
   useAccount: (p) => useAccountMock(p),
   disconnectVault: () => disconnectVaultMock(),
   removeAccount: (p) => removeAccountMock(p),
   client: () => ({ id: 'holi.apps.googleusercontent.com', source: 'shipped' }),
   setClient: (p) => setClientMock(p),
   search: (p) => searchMock(p),
-  thread: (p) => threadMock(p),
+  thread: async (p) => {
+    const { expectedAccountSub } = p as Parameters<typeof googleCap.thread>[1]
+    const binding = accountBinding
+    const assertBinding = () => {
+      if (
+        expectedAccountSub !== undefined &&
+        (expectedAccountSub !== accountSub || binding !== accountBinding)
+      )
+        throw Object.assign(new Error('Google account changed'), { data: { code: 'FORBIDDEN' } })
+    }
+    assertBinding()
+    try {
+      return await threadMock(p)
+    } finally {
+      assertBinding()
+    }
+  },
   drafts: () => draftsMock(),
   saveDraft: (p) => saveDraftMock(p),
   draftBody: (p) => draftBodyMock(p),
@@ -81,7 +100,29 @@ const google: Record<string, (params: unknown) => unknown> = {
   categoryCounts: () => ({}),
   contacts: () => [],
   sendAs: () => ['ada@syv.ai'],
-  meeting: () => null,
+  mailInvitation: (p, remote) => {
+    const target = p as Parameters<typeof googleCap.mailInvitation>[1]
+    if (target.expectedAccountSub !== accountSub) throw new Error('Google account changed')
+    return invitationMock(remote, target)
+  },
+  validateMailInvitationBinding: async (p) => {
+    await validateBinding()
+    const target = p as Parameters<typeof googleCap.validateMailInvitationBinding>[1]
+    if (
+      target.expectedAccountSub !== accountSub ||
+      target.expectedBindingRevision !== `shell-binding-${accountBinding}`
+    )
+      throw new Error('Google account binding changed')
+  },
+  respondToMailInvitation: (p, remote) => {
+    const target = p as Parameters<typeof googleCap.respondToMailInvitation>[1]
+    if (
+      target.expectedAccountSub !== accountSub ||
+      target.expectedBindingRevision !== `shell-binding-${accountBinding}`
+    )
+      throw new Error('Google account changed')
+    return respondMock(remote, target)
+  },
   'mark-read': (p) => markReadMock(p),
   star: (p) => starMock(p),
   mailMarkerAnnotations: (p) => mailMarkersMock(p),
@@ -117,14 +158,18 @@ vi.mock('@/lib/trpc', () => ({
           if (name === 'agent.stop') return agentStopMock(remote, params)
           const verb = google[name.replace(/^google\./, '')]
           if (verb === undefined) throw new Error(`unexpected ${name}`)
-          return verb(params)
+          return verb(params, remote)
         },
       },
     },
   },
 }))
 
-function summary(overrides: Record<string, unknown> = {}) {
+type SearchPage = Awaited<ReturnType<typeof googleCap.search>>
+type SearchParams = NonNullable<Parameters<typeof googleCap.search>[1]>
+type ThreadSummary = SearchPage['threads'][number]
+
+function summary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
   return {
     id: 't1',
     subject: 'Q2 budget',
@@ -142,11 +187,16 @@ function summary(overrides: Record<string, unknown> = {}) {
     labels: ['Finance'],
     hasInvite: false,
     unsubscribeUrl: null,
+    replied: false,
+    lastReplyAt: null,
+    addressedAs: 'unknown',
+    automated: false,
+    needsReply: true,
     ...overrides,
   }
 }
 
-function page(threads: unknown[], nextPageToken: string | null = null) {
+function page(threads: ThreadSummary[], nextPageToken: string | null = null): SearchPage {
   return { threads, nextPageToken, syncedAt: new Date().toISOString() }
 }
 
@@ -165,6 +215,7 @@ const thread = {
       body: 'Earlier note',
       html: null,
       attachments: [],
+      hasCalendarPayload: false,
     },
     {
       id: 'm2',
@@ -176,6 +227,7 @@ const thread = {
       body: 'See the sheet',
       html: '<p>See the <b>sheet</b></p><script>alert(1)</script>',
       attachments: [{ filename: 'q2.xlsx', mimeType: 'application/vnd.ms-excel', size: 20480 }],
+      hasCalendarPayload: false,
     },
   ],
 }
@@ -196,6 +248,16 @@ beforeEach(() => {
     foreign: false,
   })
   markReadMock.mockReset().mockResolvedValue({ ok: true })
+  readAccountsMock.mockReset().mockImplementation(async () => ({
+    accounts: [
+      { sub: 'a', email: 'ada@syv.ai' },
+      { sub: 'b', email: 'ada@home.test' },
+    ],
+    current: accountSub || null,
+  }))
+  connectMock.mockReset().mockRejectedValue(new Error('Unexpected Google consent request'))
+  invitationMock.mockReset().mockResolvedValue(invitations())
+  respondMock.mockReset().mockRejectedValue(new Error('Unexpected RSVP'))
   starMock.mockReset().mockResolvedValue({ ok: true })
   mailMarkersMock.mockReset().mockResolvedValue({})
   setMailMarkerMock.mockReset().mockResolvedValue({ ok: true })
@@ -203,6 +265,7 @@ beforeEach(() => {
   trashMock.mockReset().mockResolvedValue({ ok: true })
   useAccountMock.mockReset().mockImplementation(async ({ sub }: { sub: string }) => {
     accountSub = sub
+    accountBinding++
     return { ok: true }
   })
   disconnectVaultMock.mockReset().mockImplementation(async () => {
@@ -212,8 +275,10 @@ beforeEach(() => {
   removeAccountMock.mockReset().mockResolvedValue({ ok: true })
   setClientMock.mockReset().mockResolvedValue({ ok: true })
   accountSub = 'a'
+  accountBinding = 1
   toastMock.mockReset()
   openExternal.mockReset()
+  validateBinding.mockReset().mockResolvedValue(undefined)
   agentStopMock.mockReset().mockResolvedValue({ ok: true })
   agentStartMock.mockReset().mockResolvedValue({ ok: true })
   agentServiceMock.mockReset().mockReturnValue({
@@ -368,6 +433,64 @@ test('readable mail metadata uses opaque semantic colors for rows, drafts, and a
   expect([...size.parentElement!.classList].some((name) => /^opacity-\d+$/.test(name))).toBe(false)
 })
 
+test('the Mail shell drops a missing overlap without offering a retry', async () => {
+  searchMock.mockImplementation(
+    async ({ pageToken, refresh }: SearchParams): Promise<SearchPage> => {
+      if (pageToken === undefined && !refresh)
+        return page([summary(), summary({ id: 'gone', subject: 'Removed thread' })], 'page-2')
+      if (pageToken === 'page-2')
+        return {
+          ...page([summary({ id: 't2', subject: 'Second page thread' })]),
+          notFoundThreadIds: ['gone'],
+        }
+      throw new Error('Unexpected Gmail continuation or retry')
+    },
+  )
+  const user = userEvent.setup()
+  render(<MailShell />)
+
+  const list = within(await screen.findByRole('list', { name: 'Inbox' }))
+  expect(list.getByText('Removed thread')).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Load more' }))
+
+  expect(await list.findByText('Second page thread')).toBeVisible()
+  expect(list.getByText('Q2 budget')).toBeVisible()
+  expect(list.queryByText('Removed thread')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+})
+
+test('restarts pagination when retrying a partial continuation in the Mail shell', async () => {
+  const existing = summary({ unread: false })
+  const older = summary({ id: 't2', subject: 'Second page thread' })
+  searchMock.mockImplementation(
+    async ({ pageToken, refresh }: { pageToken?: string; refresh?: boolean }) => {
+      if (pageToken === undefined && !refresh) return page([existing], 'page-2')
+      if (pageToken === 'page-2') return { ...page([older]), unreadableThreadIds: ['oversized'] }
+      if (pageToken === undefined && refresh)
+        return { ...page([existing], 'fresh-page-2'), unreadableThreadIds: ['oversized'] }
+      if (pageToken === 'fresh-page-2')
+        return page([older, summary({ id: 'oversized', subject: 'Recovered thread' })])
+      throw new Error('Invalid Gmail page token')
+    },
+  )
+  const user = userEvent.setup()
+  render(<MailShell />)
+
+  await user.click(await screen.findByRole('button', { name: 'Load more' }))
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent(/threads couldn’t be loaded/i)
+  await user.click(within(alert).getByRole('button', { name: 'Retry' }))
+  await user.click(await screen.findByRole('button', { name: 'Load more' }))
+  expect(await screen.findByText('Recovered thread')).toBeInTheDocument()
+  expect(screen.getByText('Second page thread')).toBeInTheDocument()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  await user.click(screen.getByText('Q2 budget', { selector: 'p' }))
+  expect(await screen.findByRole('heading', { name: 'Q2 budget' })).toBeInTheDocument()
+  expect(markReadMock).not.toHaveBeenCalled()
+  expect(respondMock).not.toHaveBeenCalled()
+})
+
 test('opens a thread: marks it read, renders HTML in the sandboxed frame', async () => {
   const user = userEvent.setup()
   render(<MailShell />)
@@ -402,6 +525,1236 @@ test('opens a thread: marks it read, renders HTML in the sandboxed frame', async
   expect(attachment.compareDocumentPosition(frame) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   await user.click(attachment)
   expect(openExternal).toHaveBeenCalledWith('https://mail.google.com/x')
+})
+
+type Invitation = Awaited<ReturnType<typeof googleCap.mailInvitation>>['invitations'][number]
+type Response = Awaited<ReturnType<typeof googleCap.respondToMailInvitation>>
+const invitation: Invitation = {
+  kind: 'invitation',
+  recurring: true,
+  scope: 'occurrence',
+  bindingRevision: 'shell-binding-1',
+  responseTargetKey: 'c'.repeat(64),
+  identity: {
+    uid: 'q2-review',
+    messageId: 'm2',
+    sequence: 3,
+    recurrenceId: '2026-08-18',
+    dtstamp: '2026-08-14T12:15:00.000Z',
+    materialKey: 'workshop-revision',
+  },
+  title: 'Budget workshop',
+  start: '2026-08-18',
+  end: '2026-08-20',
+  allDay: true,
+  floating: false,
+  organizer: { name: 'Jane Doe', email: 'jane@example.com' },
+  location: 'Workshop',
+  conferenceUrl: 'https://meet.google.com/abc-defg-hij',
+  conferenceLinkSource: 'calendar',
+  htmlLink: null,
+  htmlLinkSource: null,
+  cancelled: false,
+  responseStatus: 'needsAction',
+  targetResponseStatus: null,
+  recordedResponseStatus: null,
+  sentResponseStatus: null,
+  canRespond: true,
+  unavailableReason: null,
+  responsePending: false,
+}
+
+function invitations(
+  ...cards: Awaited<ReturnType<typeof googleCap.mailInvitation>>['invitations']
+) {
+  return { invitations: cards, recoveryReason: null }
+}
+
+test.each(
+  [
+    { name: 'MailShell', Reader: MailShell, reply: 'Reply all' },
+    { name: 'MailView', Reader: MailView, reply: 'Reply' },
+  ].flatMap((surface) => ([404, 503] as const).map((status) => ({ ...surface, status }))),
+)(
+  '$name handles continuation metadata $status while a reply is being edited',
+  async ({ Reader, reply, status }) => {
+    const original = summary({ hasInvite: true, unread: false })
+    const initial = {
+      ...thread,
+      messages: [
+        { ...thread.messages[1]!, html: null, body: 'Workshop agenda', hasCalendarPayload: true },
+      ],
+    }
+    const accepted = {
+      ...invitation,
+      responseStatus: 'accepted',
+      targetResponseStatus: 'accepted',
+      recordedResponseStatus: 'accepted',
+    } as const
+    threadMock.mockResolvedValue(initial)
+    invitationMock.mockResolvedValue(invitations(accepted))
+    let finishPage!: (value: SearchPage) => void
+    const continuation = new Promise<SearchPage>((resolve) => (finishPage = resolve))
+    searchMock.mockImplementation(async ({ pageToken }: SearchParams) => {
+      if (pageToken === undefined) return page([original], 'page-2')
+      if (pageToken === 'page-2') return continuation
+      if (pageToken === 'page-3') return page([summary({ id: 't3', subject: 'Older thread' })])
+      throw new Error('Unexpected page token')
+    })
+    let finishJoin!: () => void
+    validateBinding.mockReturnValue(new Promise<void>((resolve) => (finishJoin = resolve)))
+
+    const user = userEvent.setup()
+    render(<Reader />)
+    await user.click(await screen.findByText(original.subject))
+    expect(await screen.findByText('Response: Accepted')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Maybe' })).toBeEnabled()
+    const join = screen.getByRole('button', { name: 'Join meeting' })
+    expect(join).toBeEnabled()
+    await user.click(join)
+    await screen.findByText('Checking invitation link…')
+    await user.click(screen.getByRole('button', { name: reply }))
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    const editor = await screen.findByRole('textbox', { name: 'Message' })
+    await user.type(editor, 'My unsent reply')
+    expect(editor).toHaveFocus()
+
+    const next = page(
+      [summary({ id: 't2', subject: 'Healthy continuation', snippet: '' })],
+      'page-3',
+    )
+    await act(async () =>
+      finishPage({
+        ...next,
+        ...(status === 404
+          ? { notFoundThreadIds: [original.id] }
+          : { unreadableThreadIds: [original.id] }),
+      }),
+    )
+    expect(await screen.findByText('Healthy continuation')).toBeVisible()
+    expect(screen.queryByText(original.snippet)).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: original.subject })).toBeVisible()
+    expect(
+      screen.getAllByText('Workshop agenda').find((node) => !editor.contains(node)),
+    ).toBeVisible()
+    expect(editor).toHaveTextContent('My unsent reply')
+    expect(editor).toHaveFocus()
+
+    if (status === 404) {
+      const expectWithdrawn = () => {
+        expect(screen.queryByText('Response: Accepted')).not.toBeInTheDocument()
+        expect(
+          screen.queryByRole('button', { name: /^(Join meeting|Accept|Maybe|Decline)$/ }),
+        ).not.toBeInTheDocument()
+      }
+      const unavailable = await screen.findByRole('alert')
+      expect(unavailable).toHaveTextContent(/thread is no longer available/i)
+      expectWithdrawn()
+      await act(async () => finishJoin())
+      expect(openExternal).not.toHaveBeenCalled()
+
+      await user.click(screen.getByRole('button', { name: 'Load more' }))
+      expect(await screen.findByText('Older thread')).toBeVisible()
+      expect(unavailable).toBeVisible()
+      expectWithdrawn()
+
+      threadMock.mockRejectedValueOnce(new Error('Gmail temporarily unavailable'))
+      await user.click(within(unavailable).getByRole('button', { name: 'Retry' }))
+      const stillUnavailable = await screen.findByRole('alert')
+      expect(stillUnavailable).toHaveTextContent(/thread is no longer available/i)
+      expectWithdrawn()
+
+      let finishRead!: (value: typeof initial) => void
+      threadMock.mockImplementation(() => new Promise((resolve) => (finishRead = resolve)))
+      invitationMock.mockResolvedValue(
+        invitations({
+          ...accepted,
+          responseStatus: 'tentative',
+          targetResponseStatus: 'tentative',
+          recordedResponseStatus: 'tentative',
+        }),
+      )
+      await user.click(within(stillUnavailable).getByRole('button', { name: 'Retry' }))
+      expect(await screen.findByRole('status', { name: 'Refreshing the thread' })).toBeVisible()
+      expectWithdrawn()
+      await act(async () => finishRead(initial))
+      expect(await screen.findByText('Response: Tentative')).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Join meeting' })).toBeEnabled()
+      expect(editor).toHaveTextContent('My unsent reply')
+      expect(markReadMock).not.toHaveBeenCalled()
+    } else {
+      const partial = await screen.findByRole('alert')
+      expect(partial).toHaveTextContent(/threads couldn’t be loaded/i)
+      expect(within(partial).getByRole('button', { name: 'Retry' })).toBeEnabled()
+      expect(screen.getByText('Response: Accepted')).toBeVisible()
+      await act(async () => finishJoin())
+      expect(join).toBeEnabled()
+      expect(openExternal).toHaveBeenCalledExactlyOnceWith(invitation.conferenceUrl)
+    }
+    expect(respondMock).not.toHaveBeenCalled()
+  },
+)
+
+test.each(
+  [
+    { name: 'MailShell', Reader: MailShell, reply: 'Reply all' },
+    { name: 'MailView', Reader: MailView, reply: 'Reply' },
+  ].flatMap((surface) =>
+    (['cached delta refresh', 'off-page retry'] as const).map((path) => ({ ...surface, path })),
+  ),
+)(
+  '$name withdraws a missing invitation after $path without losing the open reply',
+  async ({ Reader, reply, path }) => {
+    const offPage = path === 'off-page retry'
+    const original = summary({ hasInvite: true, unread: false })
+    const healthy = summary({ id: 't2', subject: 'Healthy inbox thread', snippet: '' })
+    const older = summary({ id: 't3', subject: 'Older inbox thread', snippet: '' })
+    const arrival = summary({ id: 't4', subject: 'New inbox arrival', snippet: '' })
+    const searchHit = summary({ id: 't5', subject: 'Filed workshop notes', snippet: '' })
+    const otherMissing = summary({ id: 't6', subject: 'Unrelated removed thread', snippet: '' })
+    const first = offPage
+      ? page([healthy, original, otherMissing], 'page-2')
+      : page([original, healthy])
+    threadMock.mockResolvedValue({
+      ...thread,
+      messages: [
+        { ...thread.messages[1]!, html: null, body: 'Workshop agenda', hasCalendarPayload: true },
+      ],
+    })
+    invitationMock.mockResolvedValue(
+      invitations({
+        ...invitation,
+        responseStatus: 'accepted',
+        targetResponseStatus: 'accepted',
+        recordedResponseStatus: 'accepted',
+      }),
+    )
+    let finishJoin!: () => void
+    validateBinding.mockReturnValue(new Promise<void>((resolve) => (finishJoin = resolve)))
+    let finishPage!: (result: SearchPage) => void
+    const next = new Promise<SearchPage>((resolve) => (finishPage = resolve))
+    let deltaReady = false
+    searchMock.mockImplementation(async ({ pageToken, refresh, query }: SearchParams) => {
+      if (offPage && pageToken === 'page-2' && !refresh) {
+        // A shifted continuation overlaps the open row, but only the other thread is gone.
+        return {
+          ...page([older]),
+          unreadableThreadIds: [original.id],
+          notFoundThreadIds: [otherMissing.id],
+        }
+      }
+      if (offPage && pageToken === 'fresh-page-2' && !refresh) return page([older])
+      if (!offPage && query === 'subject:workshop' && pageToken === undefined && !refresh)
+        return page([searchHit])
+      if (pageToken === undefined && !query) {
+        if (offPage && refresh) return next
+        if (!refresh) return deltaReady ? next : first
+      }
+      throw new Error('Unexpected Gmail page request')
+    })
+
+    const user = userEvent.setup()
+    render(<Reader />)
+    await user.click(await screen.findByText(original.subject))
+    expect(await screen.findByText('Response: Accepted')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Maybe' })).toBeEnabled()
+    const join = screen.getByRole('button', { name: 'Join meeting' })
+    expect(join).toBeEnabled()
+    await user.click(join)
+    await screen.findByText('Checking invitation link…')
+    await user.click(screen.getByRole('button', { name: reply }))
+    const editor = await screen.findByRole('textbox', { name: 'Message' })
+    await user.type(editor, 'My unsent reply')
+
+    if (offPage) {
+      await user.click(screen.getByRole('button', { name: 'Load more' }))
+      const partial = await screen.findByRole('alert')
+      expect(partial).toHaveTextContent(/threads couldn’t be loaded/i)
+      expect(screen.getByText('Response: Accepted')).toBeVisible()
+      await user.click(within(partial).getByRole('button', { name: 'Retry' }))
+    } else {
+      deltaReady = true
+      await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+      // Return to the draft while the list refresh is in flight.
+      await user.click(editor)
+      expect(editor).toHaveFocus()
+    }
+
+    threadMock.mockRejectedValue(
+      Object.assign(new Error('Gmail thread not found'), { data: { code: 'NOT_FOUND' } }),
+    )
+    await act(async () =>
+      finishPage({
+        ...(offPage ? page([arrival, healthy], 'fresh-page-2') : page([healthy])),
+        notFoundThreadIds: [original.id],
+      }),
+    )
+    const unavailable = await screen.findByRole('alert')
+    expect(unavailable).toHaveTextContent(/thread is no longer available/i)
+    expect(screen.getByText(healthy.subject)).toBeVisible()
+    expect(screen.queryByText(original.snippet)).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: original.subject })).toBeVisible()
+    expect(editor).toBeVisible()
+    expect(
+      screen.getAllByText('Workshop agenda').find((node) => !editor.contains(node)),
+    ).toBeVisible()
+    expect(editor).toHaveTextContent('My unsent reply')
+    if (!offPage) expect(editor).toHaveFocus()
+    const expectWithdrawn = () => {
+      expect(screen.queryByText('Response: Accepted')).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /^(Join meeting|Accept|Maybe|Decline)$/ }),
+      ).not.toBeInTheDocument()
+    }
+    expectWithdrawn()
+    await act(async () => finishJoin())
+    expect(openExternal).not.toHaveBeenCalled()
+    expect(respondMock).not.toHaveBeenCalled()
+
+    if (!offPage) {
+      // A different query has its own first page, not proof that the open thread recovered.
+      const searchButton = screen.queryByRole('button', { name: 'Search mail' })
+      if (searchButton !== null) await user.click(searchButton)
+      await user.type(screen.getByLabelText('Search mail'), 'subject:workshop{Enter}')
+      expect(await screen.findByText(searchHit.subject)).toBeVisible()
+      expect(screen.getByRole('alert')).toHaveTextContent(/thread is no longer available/i)
+      expectWithdrawn()
+    }
+  },
+)
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
+test.each([
+  { Reader: MailShell, name: 'MailShell', control: 'Try again', reply: 'Reply all' },
+  { Reader: MailView, name: 'MailView', control: 'Refresh mail', reply: 'Reply' },
+])(
+  '$name keeps healthy rows and honors exact absence when a history scan cannot finish',
+  async ({ Reader, control, reply }) => {
+    const selected = summary({ hasInvite: true, unread: false, snippet: 'Workshop invitation' })
+    const healthy = summary({ id: 'healthy', subject: 'Unrelated inbox mail', unread: false })
+    const recent = summary({ id: 'recent', subject: 'Mail from the new snapshot', unread: false })
+    const inFlight = deferred<SearchPage>()
+    const join = deferred<void>()
+    const exact = deferred<typeof thread>()
+    let scan = false
+    searchMock.mockImplementation(
+      async ({ pageToken, refresh, expectedAccountSub }: SearchParams) => {
+        if (refresh && pageToken === undefined && expectedAccountSub === 'a')
+          return page([recent, healthy])
+        if (pageToken === 'older' && !scan) return page([selected])
+        if (pageToken === undefined && !refresh)
+          return scan ? inFlight.promise : page([healthy], 'older')
+        throw new Error('Unexpected Gmail page request')
+      },
+    )
+    threadMock.mockImplementation(
+      async ({ id, expectedAccountSub }: Parameters<typeof googleCap.thread>[1]) => {
+        if (id !== selected.id) throw new Error('Unexpected thread')
+        if (scan) {
+          if (expectedAccountSub !== 'a') throw new Error('Exact read is not account bound')
+          return exact.promise
+        }
+        return {
+          ...thread,
+          messages: [
+            {
+              ...thread.messages[1]!,
+              body: 'Workshop agenda',
+              html: null,
+              hasCalendarPayload: true,
+            },
+          ],
+        }
+      },
+    )
+    invitationMock.mockResolvedValue(invitations(invitation))
+    validateBinding.mockReturnValueOnce(join.promise)
+
+    const user = userEvent.setup()
+    render(<Reader />)
+    await user.click(await screen.findByRole('button', { name: 'Load more' }))
+    await user.click(await screen.findByText(selected.snippet))
+    await user.click(await screen.findByRole('button', { name: 'Join meeting' }))
+    await screen.findByText('Checking invitation link…')
+    await user.click(screen.getByRole('button', { name: reply }))
+    const editor = await screen.findByRole('textbox', { name: 'Message' })
+    await user.type(editor, 'Keep this reply')
+
+    scan = true
+    await user.click(screen.getByRole('button', { name: 'Refresh mail' }))
+    await user.click(editor)
+    await act(async () => {
+      inFlight.resolve({
+        ...page([]),
+        syncedAt: '',
+        historyRecoveryRequired: true,
+        notFoundThreadIds: [selected.id],
+        unreadableThreadIds: [healthy.id],
+      })
+    })
+    const expectMissing = () => {
+      const readerAlert = screen
+        .getAllByRole('alert')
+        .find((alert) => within(alert).queryByRole('button', { name: 'Retry' }))
+      expect(readerAlert).toHaveTextContent(/no longer available/i)
+      expect(
+        screen.queryByRole('button', { name: /^(Join meeting|Accept|Maybe|Decline)$/ }),
+      ).not.toBeInTheDocument()
+    }
+    expectMissing()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled()
+    expect(screen.getByText(healthy.subject)).toBeVisible()
+    expect(screen.queryByText(selected.snippet)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^(Nothing in|No messages matching)/)).not.toBeInTheDocument()
+    expect(
+      screen.getAllByText('Workshop agenda').find((node) => !editor.contains(node)),
+    ).toBeVisible()
+    expect(editor).toHaveFocus()
+    await act(async () => join.resolve())
+    expect(openExternal).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: control }))
+    expect(await screen.findByText(recent.subject)).toBeVisible()
+    expect(screen.getByText(healthy.subject)).toBeVisible()
+    expect(await screen.findByRole('status', { name: 'Refreshing the thread' })).toBeVisible()
+    await act(async () => {
+      exact.reject(
+        Object.assign(new Error('Gmail unavailable'), { data: { code: 'SERVICE_UNAVAILABLE' } }),
+      )
+    })
+    expectMissing()
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(editor)
+    expect(editor).toHaveTextContent('Keep this reply')
+    expect(respondMock).not.toHaveBeenCalled()
+  },
+)
+
+test.each([
+  {
+    Driver: MailShell,
+    name: 'MailShell',
+    Reader: MailView,
+    reply: 'Reply',
+    control: 'Try again',
+    verdict: 404,
+  },
+  {
+    Driver: MailView,
+    name: 'MailView',
+    Reader: MailShell,
+    reply: 'Reply all',
+    control: 'Refresh mail',
+    verdict: 200,
+  },
+  {
+    Driver: MailShell,
+    name: 'MailShell',
+    Reader: MailView,
+    reply: 'Reply',
+    control: 'Refresh mail',
+    verdict: 503,
+  },
+  {
+    Driver: MailView,
+    name: 'MailView',
+    Reader: MailShell,
+    reply: 'Reply all',
+    control: 'Try again',
+    verdict: 200,
+  },
+])(
+  '$name $control recovers history while the other reader checks the continuation thread ($verdict)',
+  async ({ Driver, Reader, reply, control, verdict }) => {
+    const started = performance.now()
+    const phases: Array<{ name: string; elapsedMs: number }> = []
+    const checkpoint = (name: string) => {
+      phases.push({ name, elapsedMs: Math.round(performance.now() - started) })
+    }
+    onTestFailed(() => {
+      console.error('Mail history recovery phase evidence', {
+        control,
+        verdict,
+        elapsedMs: Math.round(performance.now() - started),
+        phases,
+      })
+    })
+    checkpoint('mount readers')
+    const selected = summary({ hasInvite: true, unread: false })
+    const healthy = summary({ id: 'healthy', subject: 'Healthy mail', snippet: '', unread: false })
+    const newMail = summary({ id: 'recent', subject: 'New first page', snippet: '', unread: false })
+    const tail = summary({ id: 'tail', subject: 'New continuation', snippet: '', unread: false })
+    const opened = {
+      ...thread,
+      messages: [
+        {
+          ...thread.messages[1]!,
+          html: null,
+          body: 'Received workshop agenda',
+          hasCalendarPayload: true,
+        },
+      ],
+    }
+    const oldJoin = deferred<void>()
+    const snapshot = deferred<SearchPage>()
+    const exact = deferred<typeof opened>()
+    let refused = false
+    let resets = 0
+    let exactReads = 0
+    searchMock.mockImplementation(
+      async ({ pageToken, refresh, expectedAccountSub }: SearchParams) => {
+        if (pageToken === 'old' && !refused) return page([selected])
+        if (pageToken === 'new' && resets > 0) return page([tail])
+        if (pageToken !== undefined) throw new Error('Stale page token')
+        if (!refused && !refresh) return page([healthy], 'old')
+        if (!refresh) return { ...page([]), historyRecoveryRequired: true }
+        if (expectedAccountSub !== accountSub) throw new Error('Reset is not bound to the account')
+        resets++
+        if (verdict === 503 && resets === 1) throw new Error('Snapshot temporarily unavailable')
+        return snapshot.promise
+      },
+    )
+    threadMock.mockImplementation(
+      async ({ id, expectedAccountSub }: Parameters<typeof googleCap.thread>[1]) => {
+        if (id !== selected.id) throw new Error('Unexpected thread')
+        if (!refused) return opened
+        if (expectedAccountSub !== accountSub) throw new Error('Exact read is not account bound')
+        if (++exactReads === 1) return exact.promise
+        return opened
+      },
+    )
+    invitationMock.mockResolvedValue(
+      invitations({
+        ...invitation,
+        responseStatus: 'accepted',
+        targetResponseStatus: 'accepted',
+        recordedResponseStatus: 'accepted',
+      }),
+    )
+    validateBinding.mockReturnValueOnce(oldJoin.promise)
+    const user = userEvent.setup()
+    const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/vault')
+    render(
+      <Provider store={store}>
+        <section aria-label="List that refreshes">
+          <Driver />
+        </section>
+        <section aria-label="Other reader">
+          <Reader />
+        </section>
+      </Provider>,
+    )
+    const driver = within(screen.getByRole('region', { name: 'List that refreshes' }))
+    const reader = within(screen.getByRole('region', { name: 'Other reader' }))
+    checkpoint('open continuation')
+    await user.click(await reader.findByRole('button', { name: 'Load more' }))
+    await user.click(await reader.findByText(selected.subject))
+    await user.click(await reader.findByRole('button', { name: 'Join meeting' }))
+    await reader.findByText('Checking invitation link…')
+    await user.click(reader.getByRole('button', { name: reply }))
+    const editor = await reader.findByRole('textbox', { name: 'Message' })
+    checkpoint('type reply')
+    await user.type(editor, 'Keep this unsent reply')
+
+    checkpoint('recover list history')
+    refused = true
+    await user.click(driver.getByRole('button', { name: 'Refresh mail' }))
+    await driver.findByRole('button', { name: 'Try again' })
+    expect(resets).toBe(0)
+    expect(reader.queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
+    checkpoint('request recovery snapshot')
+    await user.click(driver.getByRole('button', { name: control }))
+    if (verdict === 503) {
+      await driver.findByText('Snapshot temporarily unavailable')
+      // Recovery intent survives a failed snapshot; this click must not replay the gap.
+      await user.click(driver.getByRole('button', { name: 'Try again' }))
+    }
+    const expectedResets = verdict === 503 ? 2 : 1
+    fireEvent.click(driver.getByRole('button', { name: 'Refresh mail' }))
+    expect(resets).toBe(expectedResets)
+    checkpoint('restore reply focus')
+    await user.click(editor)
+    await act(async () => {
+      checkpoint('settle snapshot and old join')
+      oldJoin.resolve()
+      snapshot.resolve(page([newMail, healthy], 'new'))
+    })
+    expect(openExternal).not.toHaveBeenCalled()
+    expect(await driver.findByText(newMail.subject)).toBeVisible()
+    expect(reader.getByRole('status', { name: 'Refreshing the thread' })).toBeVisible()
+    checkpoint('settle exact reader')
+    await act(async () => {
+      if (verdict === 200) {
+        invitationMock.mockResolvedValue(
+          invitations({
+            ...invitation,
+            title: 'Rechecked workshop',
+            conferenceUrl: 'https://meet.google.com/xyz-wxyz-klm',
+          }),
+        )
+        exact.resolve(opened)
+      } else {
+        exact.reject(
+          Object.assign(new Error('Thread temporarily unavailable'), {
+            data: { code: verdict === 404 ? 'NOT_FOUND' : 'SERVICE_UNAVAILABLE' },
+          }),
+        )
+      }
+    })
+    checkpoint('verify retained reader and classify result')
+    const message = reader.getByRole('button', { name: /^Collapse message 1 of 1/ })
+    expect(within(message.closest('article')!).getByText('Received workshop agenda')).toBeVisible()
+    expect(reader.getByRole('textbox', { name: 'Message' })).toBe(editor)
+    expect(editor).toHaveTextContent('Keep this unsent reply')
+    expect(editor).toHaveFocus()
+    if (verdict === 200) {
+      expect(await reader.findByText('Rechecked workshop')).toBeVisible()
+      await user.click(reader.getByRole('button', { name: 'Join meeting' }))
+      expect(openExternal).toHaveBeenCalledExactlyOnceWith('https://meet.google.com/xyz-wxyz-klm')
+    } else {
+      const alert = await reader.findByRole('alert')
+      expect(alert).toHaveTextContent(
+        verdict === 404 ? /thread is no longer available/i : /temporarily unavailable/i,
+      )
+      expect(reader.queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
+      if (verdict === 503) {
+        expect(alert).not.toHaveTextContent(/no longer available/i)
+        await user.click(within(alert).getByRole('button', { name: 'Retry' }))
+        expect(await reader.findByRole('button', { name: 'Join meeting' })).toBeEnabled()
+      }
+    }
+    expect(respondMock).not.toHaveBeenCalled()
+    checkpoint('load recovered continuation')
+    await user.click(driver.getByRole('button', { name: 'Load more' }))
+    expect(await driver.findByText(tail.subject)).toBeVisible()
+    checkpoint('complete')
+  },
+)
+
+test.each([
+  { name: 'MailShell', Reader: MailShell, reply: 'Reply all', hasInvite: true },
+  { name: 'MailView', Reader: MailView, reply: 'Reply', hasInvite: false },
+])(
+  '$name recovers an open invitation after a failed Google account read',
+  async ({ Reader, reply, hasInvite }) => {
+    searchMock.mockResolvedValue(page([summary({ hasInvite })]))
+    const received = {
+      ...thread.messages[1]!,
+      body: 'Workshop agenda',
+      html: null,
+      hasCalendarPayload: true,
+    }
+    const opened = { ...thread, messages: [received] }
+    threadMock.mockResolvedValue(opened)
+    invitationMock.mockResolvedValue(
+      invitations({
+        ...invitation,
+        responseStatus: 'accepted',
+        targetResponseStatus: 'accepted',
+        recordedResponseStatus: 'accepted',
+      }),
+    )
+    const user = userEvent.setup()
+    const getInvitation = () => within(screen.getByRole('region', { name: 'Calendar invitation' }))
+    render(<Reader />)
+    await user.click(await screen.findByText('Q2 budget'))
+    expect(await screen.findByText('Response: Accepted')).toBeVisible()
+    expect(getInvitation().getByRole('button', { name: 'Decline' })).toBeEnabled()
+    expect(getInvitation().getByRole('button', { name: 'Join meeting' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: reply }))
+    const editor = await screen.findByRole('textbox', { name: 'Message' })
+    await user.type(editor, 'Keep the reply')
+    const message = screen.getByRole('button', { name: /^Collapse message 1 of 1/ })
+    const receivedArticle = within(message.closest('article')!)
+
+    vi.useFakeTimers()
+    try {
+      readAccountsMock.mockRejectedValue(new Error('Account information is temporarily unreadable'))
+      await act(async () => {
+        getDefaultStore().set(refreshGoogleAtom)
+        await vi.runAllTimersAsync()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+    const expectUnverified = () => {
+      expect(receivedArticle.getByText('Workshop agenda')).toBeVisible()
+      expect(screen.getByRole('textbox', { name: 'Message' })).toBe(editor)
+      expect(editor).toHaveTextContent('Keep the reply')
+      expect(screen.queryByText('Response: Accepted')).not.toBeInTheDocument()
+      for (const action of [
+        'Accept',
+        'Maybe',
+        'Decline',
+        'Join meeting',
+        'Open in Google Calendar',
+        'Open email link',
+        'Connect',
+        'Reconnect',
+      ]) {
+        expect(screen.queryByRole('button', { name: action })).not.toBeInTheDocument()
+      }
+    }
+    expect(getInvitation().getByRole('alert')).toHaveTextContent(
+      /could not verify the Google account/i,
+    )
+    expectUnverified()
+    const retry = getInvitation().getByRole('button', { name: 'Retry' })
+    expect(retry).toBeEnabled()
+
+    let finishAccounts!: (result: Awaited<ReturnType<typeof googleCap.allAccounts>>) => void
+    readAccountsMock.mockImplementation(() => new Promise((resolve) => (finishAccounts = resolve)))
+    const exact = deferred<typeof opened>()
+    threadMock.mockImplementation(
+      async ({ id, expectedAccountSub }: Parameters<typeof googleCap.thread>[1]) => {
+        if (id !== opened.id || expectedAccountSub !== accountSub)
+          throw new Error('Expected an account-bound read of the open thread')
+        return exact.promise
+      },
+    )
+    const freshInvitation = deferred<ReturnType<typeof invitations>>()
+    invitationMock.mockReturnValue(freshInvitation.promise)
+    await user.click(retry)
+    expect(getInvitation().getByRole('status')).toHaveTextContent(/checking the Google connection/i)
+    expect(getInvitation().getByRole('button', { name: 'Retry' })).toBeDisabled()
+    expectUnverified()
+    await user.click(editor)
+
+    await act(async () =>
+      finishAccounts({ accounts: [{ sub: 'a', email: 'ada@syv.ai' }], current: 'a' }),
+    )
+    expect(await screen.findByRole('status', { name: 'Refreshing the thread' })).toBeVisible()
+    expectUnverified()
+    await act(async () =>
+      exact.resolve({ ...opened, messages: [{ ...received, body: 'Current workshop agenda' }] }),
+    )
+    expect(await screen.findByRole('status', { name: 'Loading calendar invitation' })).toBeVisible()
+    expect(receivedArticle.getByText('Current workshop agenda')).toBeVisible()
+    expect(getInvitation().queryByRole('button', { name: 'Join meeting' })).not.toBeInTheDocument()
+
+    const current = {
+      ...invitation,
+      responseStatus: 'tentative',
+      targetResponseStatus: 'tentative',
+      recordedResponseStatus: 'tentative',
+      conferenceUrl: 'https://meet.google.com/xyz-abcd-efg',
+    } as const
+    await act(async () => freshInvitation.resolve(invitations(current)))
+    expect(getInvitation().queryByRole('alert')).not.toBeInTheDocument()
+    expect(getInvitation().getByText('Response: Tentative')).toBeVisible()
+    expect(screen.getByRole('textbox', { name: 'Message' })).toBe(editor)
+    expect(editor).toHaveTextContent('Keep the reply')
+    expect(editor).toHaveFocus()
+    expect(getInvitation().getByRole('button', { name: 'Accept' })).toBeEnabled()
+    expect(getInvitation().getByRole('button', { name: 'Maybe' })).toBeDisabled()
+    expect(connectMock).not.toHaveBeenCalled()
+    expect(useAccountMock).not.toHaveBeenCalled()
+    expect(respondMock).not.toHaveBeenCalled()
+    expect(openExternal).not.toHaveBeenCalled()
+
+    await user.click(getInvitation().getByRole('button', { name: 'Join meeting' }))
+    await waitFor(() => expect(openExternal).toHaveBeenCalledExactlyOnceWith(current.conferenceUrl))
+  },
+)
+
+test.each([
+  ['Accept', 'accepted', 'Accepted'],
+  ['Maybe', 'tentative', 'Tentative'],
+  ['Decline', 'declined', 'Declined'],
+] as const)(
+  'shows the invite and records %s only after Google confirms it',
+  async (label, answer, confirmed) => {
+    searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+    invitationMock.mockResolvedValue(invitations(invitation))
+    let finish!: (result: Response) => void
+    respondMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+    const user = userEvent.setup()
+    render(<MailShell />)
+    await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+    const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+    expect(await region.findByRole('heading', { name: invitation.title })).toBeInTheDocument()
+    const date = new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeZone: 'UTC' })
+    expect(
+      region.getByText(
+        `${date.format(new Date('2026-08-18'))} – ${date.format(new Date('2026-08-19'))} · All day`,
+      ),
+    ).toBeInTheDocument()
+    expect(region.getByText('Jane Doe <jane@example.com>')).toBeInTheDocument()
+    expect(region.getByText('Workshop')).toBeInTheDocument()
+    expect(region.getByRole('button', { name: 'Join meeting' })).toBeEnabled()
+
+    const button = region.getByRole('button', { name: label })
+    fireEvent.click(button)
+    fireEvent.click(button)
+    for (const action of ['Accept', 'Maybe', 'Decline']) {
+      expect(region.getByRole('button', { name: action })).toBeDisabled()
+    }
+    expect(region.queryByText(`Response: ${confirmed}`)).not.toBeInTheDocument()
+    expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
+      threadId: 't1',
+      expectedAccountSub: 'a',
+      expectedBindingRevision: invitation.bindingRevision,
+      expectedResponseTargetKey: invitation.responseTargetKey,
+      identity: invitation.identity,
+      answer,
+    })
+    await act(async () =>
+      finish({
+        outcome: 'sent',
+        channel: 'calendar',
+        answer,
+        invitation: {
+          ...invitation,
+          responseStatus: answer,
+          targetResponseStatus: answer,
+          recordedResponseStatus: answer,
+        },
+        refreshPending: false,
+      }),
+    )
+    expect(await region.findByText(`Response: ${confirmed}`)).toBeInTheDocument()
+    expect(button).toBeDisabled()
+  },
+)
+
+const workshopSeries: Invitation = {
+  ...invitation,
+  scope: 'series',
+  identity: {
+    ...invitation.identity,
+    messageId: 'm1',
+    recurrenceId: null,
+    materialKey: 'whole-workshop-revision',
+  },
+  title: 'Budget workshop series',
+  responseTargetKey: 'd'.repeat(64),
+  recordedResponseStatus: 'needsAction',
+  targetResponseStatus: 'needsAction',
+}
+const workshopOccurrence: Invitation = {
+  ...invitation,
+  responseStatus: 'accepted',
+  targetResponseStatus: 'accepted',
+  recordedResponseStatus: 'accepted',
+}
+const acceptedWorkshopSeries: Invitation = {
+  ...workshopSeries,
+  responseStatus: 'accepted',
+  targetResponseStatus: 'accepted',
+  recordedResponseStatus: 'accepted',
+  conferenceUrl: 'https://meet.google.com/klm-nopq-rst',
+}
+const cancelledWorkshopOccurrence: Invitation = {
+  ...workshopOccurrence,
+  cancelled: true,
+  canRespond: false,
+  responseStatus: null,
+  targetResponseStatus: null,
+  recordedResponseStatus: null,
+  responseTargetKey: null,
+  conferenceUrl: null,
+  conferenceLinkSource: null,
+  unavailableReason: 'This invitation was cancelled.',
+}
+
+const acceptedWorkshopResponse: Response = {
+  outcome: 'sent',
+  channel: 'calendar',
+  answer: 'accepted',
+  refreshPending: false,
+  invitation: acceptedWorkshopSeries,
+}
+
+const workshopThread = {
+  ...thread,
+  messages: thread.messages.map((message) => ({ ...message, hasCalendarPayload: true })),
+}
+
+test.each([
+  { name: 'MailShell', Reader: MailShell },
+  { name: 'MailView', Reader: MailView },
+])(
+  '$name retires a pending occurrence Join when the series response needs a fresh thread read',
+  async ({ Reader }) => {
+    searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+    threadMock.mockResolvedValue(workshopThread)
+    let finishJoin!: () => void
+    validateBinding.mockReturnValueOnce(new Promise<void>((resolve) => (finishJoin = resolve)))
+    let finishRead!: () => void
+    const reading = new Promise<void>((resolve) => (finishRead = resolve))
+    let accepted = false
+    invitationMock.mockImplementation(async () => {
+      if (!accepted) return invitations(workshopSeries, workshopOccurrence)
+      await reading
+      return invitations(acceptedWorkshopSeries, cancelledWorkshopOccurrence)
+    })
+    respondMock.mockImplementationOnce(async () => {
+      accepted = true
+      return acceptedWorkshopResponse
+    })
+
+    const user = userEvent.setup()
+    render(<Reader />)
+    await user.click(await screen.findByText('Q2 budget'))
+    const series = within(await screen.findByRole('article', { name: workshopSeries.title }))
+    const occurrence = within(screen.getByRole('article', { name: workshopOccurrence.title }))
+    expect(occurrence.getByText('Response: Accepted')).toBeVisible()
+    await user.click(occurrence.getByRole('button', { name: 'Join meeting' }))
+    expect(await occurrence.findByText('Checking invitation link…')).toBeVisible()
+    await user.click(series.getByRole('button', { name: 'Accept' }))
+
+    expect(await screen.findByText('Checking invitation status…')).toBeVisible()
+    expect(series.getByText('Response: Accepted')).toBeVisible()
+    expect(occurrence.queryByText('Response: Accepted')).not.toBeInTheDocument()
+    for (const name of ['Join meeting', 'Maybe', 'Decline']) {
+      expect(occurrence.getByRole('button', { name })).toBeDisabled()
+      expect(series.getByRole('button', { name })).toBeDisabled()
+    }
+    // The binding is still healthy; only the old invitation data was retired.
+    await act(async () => finishJoin())
+    expect(openExternal).not.toHaveBeenCalled()
+    expect(screen.getByText('Checking invitation status…')).toBeVisible()
+
+    await act(async () => finishRead())
+    expect(await occurrence.findByText(/invitation was cancelled/i)).toBeVisible()
+    expect(occurrence.queryByText('Response: Accepted')).not.toBeInTheDocument()
+    expect(
+      occurrence.queryByRole('button', { name: /join meeting|accept|maybe|decline/i }),
+    ).toBeNull()
+    expect(series.getByRole('button', { name: 'Accept' })).toBeDisabled()
+    await user.click(series.getByRole('button', { name: 'Join meeting' }))
+    await waitFor(() =>
+      expect(openExternal).toHaveBeenCalledExactlyOnceWith(acceptedWorkshopSeries.conferenceUrl),
+    )
+    expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
+      threadId: 't1',
+      expectedAccountSub: 'a',
+      expectedBindingRevision: workshopSeries.bindingRevision,
+      expectedResponseTargetKey: workshopSeries.responseTargetKey,
+      identity: workshopSeries.identity,
+      answer: 'accepted',
+    })
+  },
+)
+
+test.each(['sent', 'uncertain'] as const)(
+  'keeps occurrence actions withdrawn after a failed read for a %s series response',
+  async (outcome) => {
+    searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+    threadMock.mockResolvedValue(workshopThread)
+    const readUnavailable = 'Calendar status is temporarily unavailable'
+    invitationMock.mockResolvedValueOnce(invitations(workshopSeries, workshopOccurrence))
+    if (outcome === 'sent') {
+      // A scan can fail with a recovery reason rather than a rejected capability call.
+      invitationMock.mockResolvedValueOnce({ invitations: [], recoveryReason: readUnavailable })
+    } else {
+      invitationMock.mockRejectedValueOnce(new Error(readUnavailable))
+    }
+    invitationMock.mockResolvedValue(
+      invitations(acceptedWorkshopSeries, cancelledWorkshopOccurrence),
+    )
+    respondMock.mockResolvedValueOnce(
+      outcome === 'sent'
+        ? acceptedWorkshopResponse
+        : { ...acceptedWorkshopResponse, outcome, invitation: null, refreshPending: true },
+    )
+    const user = userEvent.setup()
+    render(<MailShell />)
+    await user.click(await screen.findByText('Q2 budget'))
+    const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+    const series = within(await region.findByRole('article', { name: workshopSeries.title }))
+    const occurrence = within(region.getByRole('article', { name: workshopOccurrence.title }))
+    await user.click(series.getByRole('button', { name: 'Accept' }))
+    if (outcome === 'uncertain') {
+      expect(await series.findByText(/couldn’t confirm whether Google accepted/i)).toBeVisible()
+      expect(occurrence.queryByText('Response: Accepted')).not.toBeInTheDocument()
+      expect(occurrence.getByRole('button', { name: 'Join meeting' })).toBeDisabled()
+      // No single-card readback: the user can reconcile, but cannot replay the RSVP.
+      await user.click(region.getByRole('button', { name: 'Retry' }))
+    }
+    expect(await region.findByRole('alert')).toHaveTextContent(/temporarily unavailable/i)
+    if (outcome === 'sent') expect(series.getByText(/Google accepted your response/i)).toBeVisible()
+    expect(occurrence.getByRole('heading', { name: workshopOccurrence.title })).toBeVisible()
+    expect(occurrence.queryByText('Response: Accepted')).not.toBeInTheDocument()
+    expect(occurrence.getByRole('button', { name: 'Join meeting' })).toBeDisabled()
+    expect(occurrence.getByRole('button', { name: 'Decline' })).toBeDisabled()
+
+    await user.click(region.getByRole('button', { name: 'Retry' }))
+    expect(await occurrence.findByText(/invitation was cancelled/i)).toBeVisible()
+    expect(series.getByText('Response: Accepted')).toBeVisible()
+    expect(series.getByRole('button', { name: 'Join meeting' })).toBeEnabled()
+    expect(respondMock).toHaveBeenCalledTimes(1)
+    expect(openExternal).not.toHaveBeenCalled()
+  },
+)
+
+test('shows a filename-less inline invitation in the mail shell', async () => {
+  threadMock.mockResolvedValue({
+    ...thread,
+    messages: [
+      thread.messages[0]!,
+      {
+        ...thread.messages[1]!,
+        body: 'Please join the budget workshop.',
+        html: null,
+        attachments: [],
+        hasCalendarPayload: true,
+      },
+    ],
+  })
+  invitationMock.mockResolvedValue(invitations(invitation))
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  expect(await region.findByRole('heading', { name: 'Budget workshop' })).toBeInTheDocument()
+  expect(region.getByRole('button', { name: 'Accept' })).toBeEnabled()
+  await user.click(region.getByRole('button', { name: 'Join meeting' }))
+  await waitFor(() =>
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith(invitation.conferenceUrl),
+  )
+})
+
+test('shows Calendar acceptance and the Gmail verification warning from response readback', async () => {
+  searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  const initial = {
+    ...invitation,
+    recordedResponseStatus: 'needsAction',
+    targetResponseStatus: 'needsAction',
+  } as const
+  const unavailableReason = 'Gmail could not verify the latest sent response'
+  const recorded = { ...initial, recordedResponseStatus: 'accepted' } as const
+  invitationMock
+    .mockResolvedValueOnce(invitations(initial))
+    .mockResolvedValue(
+      invitations({ ...recorded, responseStatus: 'accepted', targetResponseStatus: 'accepted' }),
+    )
+  respondMock.mockResolvedValueOnce({
+    outcome: 'sent',
+    channel: 'calendar',
+    answer: 'accepted',
+    refreshPending: true,
+    invitation: {
+      ...recorded,
+      responseStatus: null,
+      targetResponseStatus: null,
+      sentResponseStatus: null,
+      canRespond: false,
+      unavailableReason,
+    },
+  })
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  await user.click(await region.findByRole('button', { name: 'Accept' }))
+  expect(await region.findByText('Calendar: Accepted')).toBeVisible()
+  expect(region.getByText(/Google accepted your response, but/i)).toBeVisible()
+  expect(region.getByText(unavailableReason)).toBeVisible()
+  expect(region.getByRole('button', { name: 'Join meeting' })).toBeEnabled()
+  expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
+  for (const name of ['Accept', 'Maybe', 'Decline']) {
+    expect(region.queryByRole('button', { name })).not.toBeInTheDocument()
+  }
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByText('Response: Accepted')).toBeVisible()
+  expect(region.queryByText(unavailableReason)).not.toBeInTheDocument()
+  expect(respondMock).toHaveBeenCalledTimes(1)
+})
+
+test('Retry shows the Calendar answer without settling a contested Gmail send', async () => {
+  searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  const previous = {
+    ...invitation,
+    responseStatus: 'accepted',
+    targetResponseStatus: 'accepted',
+    sentResponseStatus: 'accepted',
+  } as const
+  invitationMock.mockResolvedValueOnce(invitations(previous)).mockResolvedValueOnce(
+    invitations({
+      ...invitation,
+      recordedResponseStatus: 'declined',
+      responseStatus: null,
+      targetResponseStatus: null,
+      sentResponseStatus: null,
+      canRespond: false,
+      responsePending: true,
+      unavailableReason: 'Gmail could not verify the latest sent response',
+    }),
+  )
+  const newConference = 'https://meet.google.com/new-link-xyz'
+  invitationMock.mockResolvedValue(
+    invitations({
+      ...invitation,
+      identity: { ...invitation.identity, messageId: 'revision', sequence: 4 },
+      conferenceUrl: newConference,
+      recordedResponseStatus: 'declined',
+      responseStatus: 'declined',
+      targetResponseStatus: 'declined',
+      sentResponseStatus: 'declined',
+    }),
+  )
+  respondMock.mockResolvedValueOnce({
+    outcome: 'uncertain',
+    channel: 'gmail',
+    answer: 'declined',
+    invitation: null,
+    refreshPending: true,
+  })
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  expect(await region.findByText('Response: Accepted')).toBeVisible()
+  const join = region.getByRole('button', { name: 'Join meeting' })
+  expect(join).toBeEnabled()
+  await user.click(region.getByRole('button', { name: 'Decline' }))
+  expect(await region.findByText(/couldn’t confirm whether Google accepted/i)).toBeVisible()
+  expect(region.queryByText(/^Response:|^Calendar:/)).not.toBeInTheDocument()
+  expect(region.getByRole('heading', { name: invitation.title })).toBeVisible()
+  expect(join).toBeDisabled()
+  fireEvent.click(join)
+  expect(validateBinding).not.toHaveBeenCalled()
+  expect(openExternal).not.toHaveBeenCalled()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByText('Calendar: Declined')).toBeVisible()
+  const refreshedJoin = region.getByRole('button', { name: 'Join meeting' })
+  expect(refreshedJoin).toBeEnabled()
+  expect(region.getByText(/Gmail.*verify/i)).toBeVisible()
+  expect(region.getByText(/couldn’t confirm whether Google accepted/i)).toBeVisible()
+  expect(region.queryByText(/^Response:/)).not.toBeInTheDocument()
+  for (const name of ['Accept', 'Maybe', 'Decline']) {
+    expect(region.queryByRole('button', { name })).not.toBeInTheDocument()
+  }
+  await user.click(refreshedJoin)
+  await waitFor(() =>
+    expect(openExternal).toHaveBeenCalledExactlyOnceWith(invitation.conferenceUrl),
+  )
+  const retry = region.getByRole('button', { name: 'Retry' })
+  await waitFor(() => expect(retry).toBeEnabled())
+  await user.click(retry)
+  expect(await region.findByText('Response: Declined')).toBeVisible()
+  expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
+  await user.click(region.getByRole('button', { name: 'Join meeting' }))
+  await waitFor(() => expect(openExternal).toHaveBeenNthCalledWith(2, newConference))
+  expect(respondMock).toHaveBeenCalledTimes(1)
+})
+
+test('keeps Google acceptance separate from a different response recorded after Retry', async () => {
+  searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  invitationMock.mockResolvedValueOnce(invitations(invitation))
+  invitationMock.mockRejectedValueOnce(new Error('Refresh unavailable'))
+  invitationMock.mockResolvedValue(
+    invitations({
+      ...invitation,
+      responseStatus: 'tentative',
+      targetResponseStatus: 'tentative',
+      sentResponseStatus: 'tentative',
+    }),
+  )
+  respondMock.mockResolvedValue({
+    outcome: 'sent',
+    channel: 'gmail',
+    answer: 'accepted',
+    invitation: {
+      ...invitation,
+      responseStatus: 'declined',
+      targetResponseStatus: 'declined',
+      sentResponseStatus: 'declined',
+    },
+    refreshPending: true,
+  })
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  const region = within(await screen.findByRole('region', { name: 'Calendar invitation' }))
+  await user.click(await region.findByRole('button', { name: 'Accept' }))
+  expect(await region.findByText('Response: Declined')).toBeInTheDocument()
+  expect(region.getByRole('status')).toHaveTextContent(/current recorded response is different/i)
+  expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
+  expect(region.getByRole('button', { name: 'Decline' })).toBeDisabled()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByRole('alert')).toHaveTextContent('Refresh unavailable')
+  expect(region.getByRole('button', { name: 'Decline' })).toBeDisabled()
+  await user.click(region.getByRole('button', { name: 'Retry' }))
+  expect(await region.findByText('Response: Tentative')).toBeInTheDocument()
+  expect(region.queryByText('Response: Accepted')).not.toBeInTheDocument()
+  expect(region.getByRole('status')).toHaveTextContent(/current recorded response is different/i)
+  expect(region.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+  expect(respondMock).toHaveBeenCalledTimes(1)
+})
+
+test('a response from a previous account opening cannot change the visible invite after A–B–A', async () => {
+  searchMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  invitationMock.mockResolvedValueOnce(invitations(invitation))
+  invitationMock.mockImplementation(async (_remote, target) =>
+    target.expectedAccountSub === 'b'
+      ? invitations({
+          ...invitation,
+          bindingRevision: `shell-binding-${accountBinding}`,
+          title: 'Another mailbox’s workshop',
+          identity: { ...invitation.identity, messageId: 'm-other', uid: 'other-workshop' },
+        })
+      : invitations({
+          ...invitation,
+          bindingRevision: `shell-binding-${accountBinding}`,
+          title: 'Budget workshop',
+          responseStatus: 'accepted',
+          targetResponseStatus: 'accepted',
+          recordedResponseStatus: 'accepted',
+        }),
+  )
+  let finish!: (result: Response) => void
+  respondMock.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+  const user = userEvent.setup()
+  render(<MailShell />)
+  await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+  await user.click(await screen.findByRole('button', { name: 'Decline' }))
+  expect(screen.getByRole('button', { name: 'Maybe' })).toBeDisabled()
+  for (const [email, title] of [
+    ['ada@home.test', 'Another mailbox’s workshop'],
+    ['ada@syv.ai', 'Budget workshop'],
+  ] as const) {
+    await user.click(screen.getByRole('button', { name: /Google account/ }))
+    await user.click(await screen.findByRole('menuitem', { name: email }))
+    await screen.findByRole('button', { name: `Google account ${email}` })
+    await user.click(await screen.findByText('Q2 budget', { selector: 'p' }))
+    expect(await screen.findByRole('heading', { name: title })).toBeInTheDocument()
+  }
+  await act(async () =>
+    finish({
+      outcome: 'sent',
+      channel: 'calendar',
+      answer: 'declined',
+      refreshPending: false,
+      invitation: {
+        ...invitation,
+        responseStatus: 'declined',
+        targetResponseStatus: 'declined',
+        recordedResponseStatus: 'declined',
+      },
+    }),
+  )
+  expect(screen.getByText('Response: Accepted')).toBeInTheDocument()
+  expect(screen.queryByText('Response: Declined')).not.toBeInTheDocument()
+  expect(respondMock).toHaveBeenCalledExactlyOnceWith('syv-ai/vault', {
+    threadId: 't1',
+    expectedAccountSub: 'a',
+    expectedBindingRevision: invitation.bindingRevision,
+    expectedResponseTargetKey: invitation.responseTargetKey,
+    identity: invitation.identity,
+    answer: 'declined',
+  })
 })
 
 test('the Unread tab asks Gmail for unread threads only', async () => {

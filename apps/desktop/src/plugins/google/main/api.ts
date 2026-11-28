@@ -40,11 +40,46 @@ export class GoogleApiError extends Error {
   }
 }
 
+/** A resource GET exceeded its own deadline, after acquiring a token. */
+export class GoogleResourceTimeoutError extends Error {
+  constructor(cause: unknown) {
+    super('Google did not finish the read in time', { cause })
+    this.name = 'GoogleResourceTimeoutError'
+  }
+}
+
+/** A successful resource GET returned invalid JSON, not an auth or HTTP refusal.
+ * Keep the SyntaxError contract for existing readers of malformed bodies. */
+export class GoogleResourceDecodeError extends SyntaxError {
+  constructor(cause: SyntaxError) {
+    super(cause.message, { cause })
+    this.name = 'GoogleResourceDecodeError'
+  }
+}
+
+/** The request left Holi, but Google did not give a definitive verdict. */
+export class GoogleWriteUncertainError extends Error {
+  constructor(cause: unknown) {
+    super('Google did not confirm the write', { cause })
+    this.name = 'GoogleWriteUncertainError'
+  }
+}
+
+/** Recheck provider evidence, then record a reservation before dispatch. */
+export type GoogleDispatchGate = {
+  validate: () => Promise<void>
+  reserveDispatch: () => Promise<void>
+  /** Synchronous check after reservation and immediately before the request. */
+  assertDispatch?: () => void
+}
+
 export interface GoogleApiDeps {
   /** `GoogleSession.getAccessToken` — refreshes and single-flights on its own. */
   accessToken: () => Promise<string>
   fetch?: typeof globalThis.fetch
   beforeRequest?: () => void
+  /** Synchronous invitation binding check: no await may separate it from dispatch. */
+  assertRequest?: () => void
 }
 
 /** A hung request must not stall a panel with no error and nothing to cancel. */
@@ -86,13 +121,36 @@ export class GoogleApi {
       )
     }
 
+    this.#deps.assertRequest?.()
+    const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    const readFailed = (error: unknown, readingBody = false): never => {
+      this.#deps.assertRequest?.()
+      // Fetch rejects with the deadline's reason; aborting an already-started
+      // body can instead reject with AbortError. Neither is an HTTP response.
+      if (
+        deadline.aborted &&
+        (error === deadline.reason ||
+          (readingBody && error instanceof DOMException && error.name === 'AbortError'))
+      ) {
+        throw new GoogleResourceTimeoutError(error)
+      }
+      if (readingBody && error instanceof SyntaxError) throw new GoogleResourceDecodeError(error)
+      throw error
+    }
     const res = await (this.#deps.fetch ?? globalThis.fetch)(full, {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
+      signal: deadline,
+    }).catch((error: unknown) => readFailed(error))
 
-    if (!res.ok) throw await classify(res)
-    return (await res.json()) as T
+    this.#deps.assertRequest?.()
+    if (!res.ok) {
+      const error = await classify(res)
+      this.#deps.assertRequest?.()
+      throw error
+    }
+    const data = (await res.json().catch((error: unknown) => readFailed(error, true))) as T
+    this.#deps.assertRequest?.()
+    return data
   }
 
   /**
@@ -107,6 +165,9 @@ export class GoogleApi {
     url: string,
     body?: unknown,
     validate?: () => Promise<void>,
+    ifMatch?: string,
+    reserveDispatch?: () => Promise<void>,
+    assertDispatch?: () => void,
   ): Promise<Response> {
     let token: string
     try {
@@ -122,22 +183,44 @@ export class GoogleApi {
     }
 
     this.#deps.beforeRequest?.()
-    await validate?.()
-    const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
+    if (validate) await validate()
+    const init: RequestInit = {
       method,
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...(ifMatch === undefined ? {} : { 'If-Match': ifMatch }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
+    }
+    if (reserveDispatch) await reserveDispatch()
+    this.#deps.assertRequest?.()
+    assertDispatch?.()
+    let res: Response
+    try {
+      res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
+        ...init,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+    } catch (error) {
+      // Do not reclassify a refusal from validation or token minting: no write left Holi.
+      if (reserveDispatch || this.#deps.assertRequest) throw new GoogleWriteUncertainError(error)
+      throw error
+    }
 
-    // A 403 here is most often `insufficientPermissions` (a grant older than
-    // GOOGLE_SCOPES), which `classify` maps to `scope` so the UI can offer the
-    // reconnect that fixes it. See `GoogleSession.missingScopes`.
-    if (!res.ok) throw await classify(res)
+    if (!res.ok) {
+      const error = await classify(res)
+      if (
+        (reserveDispatch || this.#deps.assertRequest) &&
+        (error.status === 408 ||
+          error.status >= 500 ||
+          (method !== 'PATCH' && this.#deps.assertRequest !== undefined && error.status === 404))
+      ) {
+        throw new GoogleWriteUncertainError(error)
+      }
+      throw error
+    }
     return res
   }
 
@@ -163,8 +246,20 @@ export class GoogleApi {
    * every field the caller did not think to send comes back blank. Moving an
    * event must not be able to erase its description.
    */
-  async patch(url: string, body: unknown): Promise<void> {
-    const res = await this.#write('PATCH', url, body)
+  async patch(
+    url: string,
+    body: unknown,
+    options?: Partial<GoogleDispatchGate> & { ifMatch?: string },
+  ): Promise<void> {
+    const res = await this.#write(
+      'PATCH',
+      url,
+      body,
+      options?.validate,
+      options?.ifMatch,
+      options?.reserveDispatch,
+      options?.assertDispatch,
+    )
     await res.text().catch(() => '')
   }
 
@@ -184,8 +279,16 @@ export class GoogleApi {
    * failure, because a send Google *accepted*, reported as failed, is a second
    * email to a real person once the caller retries.
    */
-  async postJson<T>(url: string, body: unknown): Promise<T | null> {
-    const res = await this.#write('POST', url, body)
+  async postJson<T>(url: string, body: unknown, gate?: GoogleDispatchGate): Promise<T | null> {
+    const res = await this.#write(
+      'POST',
+      url,
+      body,
+      gate?.validate,
+      undefined,
+      gate?.reserveDispatch,
+      gate?.assertDispatch,
+    )
     // The catch is the design, not defensiveness: past this line Google has
     // already done the thing.
     return await res.json().catch(() => null)
@@ -248,8 +351,8 @@ export class GoogleApi {
         pageToken,
       })
       all.push(...items(page))
-      if (page.nextPageToken === undefined) break
       pageToken = page.nextPageToken
+      if (pageToken === undefined) break
     }
     return all
   }
@@ -298,7 +401,16 @@ function reasonOf(body: string): string | null {
     if (parsed === null || typeof parsed !== 'object') return null
     const error = (parsed as { error?: unknown }).error
     if (error === null || typeof error !== 'object') return null
-    const e = error as { errors?: { reason?: string }[]; status?: string }
+    const e = error as {
+      errors?: { reason?: string }[]
+      details?: { reason?: string }[]
+      status?: string
+    }
+    if (
+      Array.isArray(e.details) &&
+      e.details.some((detail) => detail?.reason === 'ACCESS_TOKEN_SCOPE_INSUFFICIENT')
+    )
+      return 'ACCESS_TOKEN_SCOPE_INSUFFICIENT'
     return e.errors?.[0]?.reason ?? e.status ?? null
   } catch {
     return null

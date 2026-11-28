@@ -13,8 +13,9 @@
  *     all read as "no accounts". "Connect again" is a recovery a user can
  *     perform; a bricked app is not.
  */
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import type { GoogleClient, GoogleClientSource } from './credentials'
 
 /** The OS keychain's encryption, as Electron's `safeStorage` offers it. */
@@ -37,10 +38,10 @@ export interface StoredGoogleAuth {
   accessToken: string
   /** Epoch ms. */
   expiresAt: number
-  /** Missing only on legacy records; encrypted with the grant, never sent to UI. */
-  client?: GoogleClient & { source: GoogleClientSource }
   /** What was actually granted, so a failure can name the missing scope. */
   scopes: string[]
+  /** Missing only on legacy records; encrypted with the grant, never sent to UI. */
+  client?: GoogleClient & { source: GoogleClientSource }
 }
 
 /** Every connected account, keyed by `sub`. */
@@ -115,6 +116,28 @@ export class GoogleTokenStore {
     const tmp = `${this.#file}.tmp`
     await writeFile(tmp, JSON.stringify(envelope), { mode: 0o600 })
     await rename(tmp, this.#file)
+  }
+
+  // Keep these credential-free markers separate from encrypted grants: local
+  // token deletion or a keychain reset is not evidence of remote retirement.
+  async readRevocationFences(): Promise<Set<string>> {
+    try {
+      const markers = await readdir(`${this.#file}.revocations`)
+      // Older markers named only the subject digest. They still fence consent.
+      return new Set(markers.map((name) => name.split('.', 1)[0]!))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Set()
+      throw error
+    }
+  }
+
+  /** Record the attempt before dispatch; the returned release owns only this marker. */
+  async beginRevocation(subjectDigest: string): Promise<() => Promise<void>> {
+    const directory = `${this.#file}.revocations`
+    const marker = join(directory, `${subjectDigest}.${randomUUID()}`)
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    await writeFile(marker, '', { mode: 0o600, flag: 'wx' })
+    return () => rm(marker, { force: true })
   }
 
   async clear(): Promise<void> {

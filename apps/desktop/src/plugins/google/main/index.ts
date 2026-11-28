@@ -18,6 +18,8 @@ import { openGoogleCache } from './cache'
 import type { CalendarOverrides } from './calendar'
 import { disposeGoogleCapabilities, GOOGLE_NAMESPACES, googleCapabilities } from './capabilities'
 import { createGoogleData, type GoogleData } from './data'
+import { createMailInvitationSession } from './mail-invitation-session'
+import { createMailInvitationStore } from './mail-invitation-store'
 import { createMailAttention, MAIL_ATTENTION_EVENT, type MailAttention } from './mail-attention'
 import { createMailMarkerStore } from './markers'
 import { googleSeed } from './seed'
@@ -27,6 +29,7 @@ import { startGoogleTriggers } from './triggers'
 
 type GoogleOwner = {
   accounts: Awaited<ReturnType<typeof import('./electron').createGoogleAccountsManager>>
+  mailInvitations: ReturnType<typeof createMailInvitationSession>
   dataForSession: (session: GoogleSession) => GoogleData
   mailAttention: MailAttention
 }
@@ -132,12 +135,17 @@ export const googleMain: MainPlugin = {
             }
           }
         })
-        return { accounts, dataForSession, mailAttention }
+        return {
+          accounts,
+          dataForSession,
+          mailAttention,
+          mailInvitations: createMailInvitationSession(createMailInvitationStore(ctx.userData)),
+        }
       })()
       owners.set(ctx.userData, ownerPromise)
       void ownerPromise.catch(() => owners.delete(ctx.userData))
     }
-    const { accounts, dataForSession, mailAttention } = await ownerPromise
+    const { accounts, dataForSession, mailInvitations, mailAttention } = await ownerPromise
 
     /**
      * Keep a removed account's cache off the disk. On `onChange` rather than
@@ -173,6 +181,7 @@ export const googleMain: MainPlugin = {
 
     const capabilities = googleCapabilities({
       accounts,
+      mailInvitations,
       meetings: createMeetingCreation({ userData: ctx.userData, accounts }),
       dataFor,
       dataForSession,

@@ -19,31 +19,43 @@
  * HTML sanitizer remains in the renderer, where a DOM is available.
  */
 import { Parser } from 'htmlparser2'
-import { GoogleApiError, type GoogleApi } from './api'
+import {
+  GoogleApiError,
+  GoogleResourceDecodeError,
+  GoogleResourceTimeoutError,
+  type GoogleApi,
+} from './api'
 import { cleanMailText } from './mail-text'
 import { fetchLabelNames } from './labels'
+import {
+  calendarMimeMethod,
+  CalendarScanError,
+  createMimeWalk,
+  headerOf,
+  isCalendarPart,
+  type RawPart,
+} from './gmail-mime'
+import {
+  normalizeMessageIds,
+  parseAddress,
+  parseAddresses,
+  parseHeaderParameters,
+  type MailAddress,
+} from './gmail-headers'
+import {
+  fetchFullThread,
+  GMAIL_BASE as BASE,
+  isGmailMessageId,
+  threadMessages,
+  type RawMessage,
+  type RawThread,
+} from './gmail-thread'
 import { mapPooled } from './map-pooled'
 import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mime'
-
-const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
 /** Gmail's own inbox tabs. `primary` is what Gmail calls `CATEGORY_PERSONAL`
  *  internally; the two names are not interchangeable in the API. */
 export type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
-
-/**
- * A person on a message, as the header spelled them.
- *
- * Both halves are kept: `name` is what a list shows, `email` is what identifies
- * them.
- */
-export interface MailAddress {
-  /** The display name, falling back to the address when the header had none. */
-  name: string
-  /** The bare address, lowercased, or `''` when the header carried nothing that
-   *  looks like one. Empty means "do not offer a mailto:". */
-  email: string
-}
 
 export interface MailThreadSummary {
   id: string
@@ -84,10 +96,8 @@ export interface MailThreadSummary {
    *  on the user's behalf. */
   unsubscribeUrl: string | null
   /**
-   * A calendar invite (`.ics`) is attached somewhere in this thread.
-   *
-   * The one field here that does **not** come from the thread's own metadata:
-   * see `fetchInviteIds` for why it cannot, and what is asked instead.
+   * Calendar invitation evidence from MIME headers or Gmail's `.ics` index.
+   * Neither source requires fetching the message body.
    */
   hasInvite: boolean
   /** Whether a Gmail-SENT message followed an incoming non-SENT message, regardless of later follow-up. */
@@ -132,6 +142,9 @@ interface MailMessage {
   /** Every part with a filename, however deep. **No extra request**: the
    *  thread is already fetched at `format=full`, so the parts are in hand. */
   attachments: MailAttachment[]
+  /** A calendar part is present in the MIME tree, including filename-less inline parts.
+   *  This triggers discovery in the reader; it does not establish an invitation. */
+  hasCalendarPayload: boolean
   /** Plain text, for the agent and as the UI's fallback. See the module note. */
   body: string
   /** The raw HTML part, or `null`. **Unsanitized**: the renderer sanitizes it
@@ -139,8 +152,8 @@ interface MailMessage {
   html: string | null
 }
 
-/** What the agent sees: the same thread with the markup removed. */
-type AgentMailMessage = Omit<MailMessage, 'html'>
+/** What the agent sees: the same thread without markup or the reader's lookup hint. */
+type AgentMailMessage = Omit<MailMessage, 'html' | 'hasCalendarPayload'>
 
 export interface AgentMailThread {
   id: string
@@ -154,34 +167,6 @@ export interface MailThread {
   subject: string
   webUrl: string
   messages: MailMessage[]
-}
-
-interface RawHeader {
-  name?: string
-  value?: string
-}
-
-interface RawPart {
-  mimeType?: string
-  filename?: string
-  headers?: RawHeader[]
-  body?: { data?: string; size?: number; attachmentId?: string }
-  parts?: RawPart[]
-}
-
-interface RawMessage {
-  id?: string
-  /** Absent on a loose draft that belongs to no conversation. */
-  threadId?: string
-  labelIds?: string[]
-  snippet?: string
-  internalDate?: string
-  payload?: RawPart
-}
-
-interface RawThread {
-  id?: string
-  messages?: RawMessage[]
 }
 
 /**
@@ -205,116 +190,6 @@ export function messageUrl(rfc822MessageId: string | null, threadId: string): st
   return `https://mail.google.com/mail/u/0/#search/${encodeURIComponent(`rfc822msgid:${bare}`)}`
 }
 
-function headerOf(part: RawPart | undefined, name: string): string | null {
-  const found = part?.headers?.find((h) => h.name?.toLowerCase() === name.toLowerCase())
-  return found?.value ?? null
-}
-
-/**
- * `"Ada Holm" <ada@syv.ai>` → `{ name, email }`.
- *
- * **Both halves travel.** The name is what a list shows, but the address is the
- * only thing that identifies a person, and a renderer cannot recover what main
- * threw away.
- *
- * `email` is lowercased because addresses are compared, not just shown, and the
- * local part's case is not significant in any mail system anyone uses. `name`
- * falls back to the address so a display always has something to print.
- */
-function parseAddress(value: string | null): MailAddress {
-  if (value === null) return { name: '', email: '' }
-  const match = /^\s*(?:"((?:[^"\\]|\\[\s\S])*)"|([^"<]*?))\s*<([^<>]+)>\s*$/.exec(value)
-  if (match !== null) {
-    const email = match[3]!.trim().toLowerCase()
-    const name = (match[1] ?? match[2] ?? '').replace(/\\([\s\S])/g, '$1').trim()
-    return { name: name === '' ? email : name, email }
-  }
-  // A bare address, or a header this pattern does not fit. Treated as an
-  // address when it looks like one at all, so `mailto:` still works.
-  const bare = value.trim()
-  return { name: bare, email: bare.includes('@') ? bare.toLowerCase() : '' }
-}
-
-function stripGroupLabel(mailbox: string): string {
-  let quoted = false
-  let escaped = false
-  let angleDepth = 0
-  for (let index = 0; index < mailbox.length; index += 1) {
-    const character = mailbox[index]!
-    if (escaped) escaped = false
-    else if (character === '\\' && quoted) escaped = true
-    else if (character === '"') quoted = !quoted
-    else if (!quoted && character === '<') angleDepth += 1
-    else if (!quoted && character === '>') angleDepth = Math.max(0, angleDepth - 1)
-    else if (!quoted && angleDepth === 0 && character === ':') return mailbox.slice(index + 1)
-  }
-  return mailbox
-}
-
-function parseAddresses(value: string | null): MailAddress[] {
-  if (value === null) return []
-  // RFC 5322 address lists can contain nested comments and named groups in
-  // addition to quoted commas. Remove comments outside quoted strings, then
-  // split only at top-level commas/semicolons; a group's label is not a mailbox.
-  let uncommented = ''
-  let quoted = false
-  let escaped = false
-  let commentDepth = 0
-  for (const character of value) {
-    if (escaped) {
-      if (commentDepth === 0) uncommented += character
-      escaped = false
-    } else if (character === '\\' && quoted) {
-      if (commentDepth === 0) uncommented += character
-      escaped = true
-    } else if (character === '"' && commentDepth === 0) {
-      quoted = !quoted
-      uncommented += character
-    } else if (!quoted && character === '(') {
-      commentDepth += 1
-    } else if (!quoted && character === ')' && commentDepth > 0) {
-      commentDepth -= 1
-    } else if (commentDepth === 0) {
-      uncommented += character
-    }
-  }
-
-  const addresses: MailAddress[] = []
-  let part = ''
-  quoted = false
-  escaped = false
-  let angleDepth = 0
-  for (const character of uncommented) {
-    if (escaped) {
-      part += character
-      escaped = false
-    } else if (character === '\\' && quoted) {
-      part += character
-      escaped = true
-    } else if (character === '"') {
-      quoted = !quoted
-      part += character
-    } else if (!quoted && character === '<') {
-      angleDepth += 1
-      part += character
-    } else if (!quoted && character === '>') {
-      angleDepth = Math.max(0, angleDepth - 1)
-      part += character
-    } else if (!quoted && angleDepth === 0 && (character === ',' || character === ';')) {
-      const mailbox = part.trim()
-      const candidate = stripGroupLabel(mailbox)
-      if (candidate !== '') addresses.push(parseAddress(candidate))
-      part = ''
-    } else {
-      part += character
-    }
-  }
-  if (part.trim() !== '') {
-    addresses.push(parseAddress(stripGroupLabel(part)))
-  }
-  return addresses.filter((address) => address.name !== '')
-}
-
 /** Gmail encodes body data as base64**url**; plain base64 decoding corrupts any
  *  message containing a `-` or `_` in its payload. */
 function decodeBody(data: string | undefined): string {
@@ -334,70 +209,41 @@ function decodeBody(data: string | undefined): string {
  * @public exported for its test
  */
 export function bodyTextOf(payload: RawPart | undefined, { trim = true } = {}): string {
-  const plain = findPart(payload, 'text/plain')
-  if (plain !== null) {
-    const text = decodeBody(plain.body?.data)
-    return trim ? text.trim() : text
-  }
+  const { plain, html, fallback } = bodyParts(payload)
+  return projectText(plain, html, fallback, trim)
+}
 
-  const html = findPart(payload, 'text/html')
-  if (html !== null) return htmlToText(decodeBody(html.body?.data))
-
-  // A single-part message carries its body on the payload itself.
-  const text = decodeBody(payload?.body?.data)
+function projectText(
+  plain: RawPart | null,
+  html: RawPart | null,
+  payload: RawPart | undefined,
+  trim = true,
+): string {
+  if (!plain && html) return htmlToText(decodeBody(html.body?.data))
+  const text = decodeBody((plain ?? payload)?.body?.data)
   return trim ? text.trim() : text
 }
 
-/**
- * The message's HTML, exactly as Google returned it, or `null`.
- *
- * Verbatim on purpose. Trimming or pre-stripping here would give the renderer's
- * sanitizer a subtly different input from the one it is tested against, and
- * would invite the belief that main already made this safe. It did not.
- * @public exported for its test
- */
+/** Unsanitized HTML exactly as returned by Gmail. @public exported for its test */
 export function bodyHtmlOf(payload: RawPart | undefined): string | null {
-  // `findPart` matches the payload itself, so a single-part HTML message needs
-  // no separate branch here.
-  const html = findPart(payload, 'text/html')
-  if (html === null) return null
-  const raw = decodeBody(html.body?.data)
-  // An empty part is "no HTML", not "empty HTML": the UI branches on null, and
-  // a blank string would render a blank message instead of the text body.
-  return raw === '' ? null : raw
+  return decodeBody(bodyParts(payload).html?.body?.data) || null
 }
 
-/**
- * Every attachment in a message, however deep in the MIME tree.
- *
- * **A filename is what makes a part a file.** That is the same rule `findPart`
- * uses in reverse to refuse an attachment as the body.
- */
-function attachmentsOf(part: RawPart | undefined): MailAttachment[] {
-  if (part === undefined) return []
-  const here: MailAttachment[] =
-    part.filename !== undefined && part.filename !== ''
-      ? [
-          {
-            filename: part.filename,
-            mimeType: part.mimeType ?? 'application/octet-stream',
-            size: part.body?.size ?? 0,
-          },
-        ]
-      : []
-  return [...here, ...(part.parts ?? []).flatMap((child) => attachmentsOf(child))]
+type PreferredBody = { plain: RawPart | null; html: RawPart | null; fallback?: RawPart }
+
+function considerBody(preferred: PreferredBody, part: RawPart, root: boolean, forwarded: boolean) {
+  if (forwarded || part.filename || part.body?.data === undefined) return
+  if (root) preferred.fallback = part
+  if (part.mimeType === 'text/plain') preferred.plain ??= part
+  if (part.mimeType === 'text/html') preferred.html ??= part
 }
 
-function findPart(part: RawPart | undefined, mimeType: string): RawPart | null {
-  if (part === undefined) return null
-  // An attachment is never the message body, even when its type matches.
-  const isAttachment = part.filename !== undefined && part.filename !== ''
-  if (part.mimeType === mimeType && !isAttachment && part.body?.data !== undefined) return part
-  for (const child of part.parts ?? []) {
-    const found = findPart(child, mimeType)
-    if (found !== null) return found
-  }
-  return null
+function bodyParts(payload: RawPart | undefined): PreferredBody {
+  const preferred: PreferredBody = { plain: null, html: null }
+  createMimeWalk()(payload, (part, location, forwarded) =>
+    considerBody(preferred, part, location.path === '0', forwarded),
+  )
+  return preferred
 }
 
 /**
@@ -462,8 +308,7 @@ export interface ListThreadsOptions {
    * A **query term**, like `category` and `unread`, rather than a second
    * listing path. It is the base term, so an explicit query replaces it
    * entirely: a search escapes the mailbox exactly as it escapes the tabs.
-   * `mail-sync` also reads it (via `mailboxLabel`) to decide which label's
-   * movement means a thread has left this list.
+   * Mail sync also uses the mailbox label to identify possible departures.
    */
   mailbox?: MailboxName
   /** Filter each fetched page to incoming threads without a later real reply. */
@@ -478,14 +323,14 @@ export interface ListThreadsOptions {
  *  are places the user navigates to. */
 export type MailboxName = 'inbox' | 'sent'
 
-/** Gmail's own label for a mailbox, which is what `history.list` is scoped by
- *  and what a departure is measured against. */
-export function mailboxLabel(mailbox: MailboxName | undefined): string {
-  return mailbox === 'sent' ? 'SENT' : 'INBOX'
-}
-
 export interface MailPage {
+  /** No list was published: the caller must explicitly request a new baseline. */
+  historyRecoveryRequired?: true
   threads: MailThreadSummary[]
+  /** Unresolved metadata failures, including known failures outside this page on cached reads. */
+  unreadableThreadIds?: string[]
+  /** Thread metadata 404s observed during this read, including off-page retries. */
+  notFoundThreadIds?: string[]
   /** `null` when there is nothing more to load. */
   nextPageToken: string | null
   /** When these threads were actually obtained from Google, ISO. The footer
@@ -590,7 +435,7 @@ export async function listThreadIds(
   const page = await api.get<{ threads?: { id?: string }[]; nextPageToken?: string }>(
     `${BASE}/threads`,
     {
-      q: composeQuery(options),
+      q: describeThreadList(options).q,
       maxResults: String(options.limit ?? 25),
       pageToken: options.pageToken,
     },
@@ -611,36 +456,77 @@ export async function listThreads(
   options: ListThreadsOptions = {},
   knownAddresses?: string[],
 ): Promise<MailPage> {
-  const page = await listThreadIds(api, options)
+  const { page, outcomes } = await fetchThreadPage(api, options, knownAddresses)
+  return { ...page, ...threadMetadataFailures(outcomes) }
+}
 
+export async function fetchThreadPage(
+  api: GoogleApi,
+  options: ListThreadsOptions,
+  knownAddresses?: string[],
+) {
+  const { ids, nextPageToken } = await listThreadIds(api, options)
+  const [metadata, names] = await Promise.all([
+    fetchThreadMetadata(api, ids),
+    ids.length ? fetchLabelNames(api) : new Map<string, string>(),
+  ])
+  const threads = await projectThreadRows(
+    api,
+    metadata.filter((row) => row.kind === 'readable'),
+    names,
+    knownAddresses,
+  )
   return {
-    threads: await fetchThreadSummaries(api, page.ids, knownAddresses),
-    nextPageToken: page.nextPageToken,
-    syncedAt: new Date().toISOString(),
+    page: { threads, nextPageToken, syncedAt: new Date().toISOString() },
+    outcomes: metadata.map(({ id, kind }) => ({ id, kind })),
   }
 }
 
-/**
- * Summaries for a known set of thread ids, in the order given.
- *
- * The N+1 in one place: `listThreads` uses it for a whole page, and
- * `mail-sync` uses it for the two threads a delta says actually changed. The
- * label lookup is one request either way.
- */
-export async function fetchThreadSummaries(
+/** Per requested ID; only an actual HTTP 404 proves absence. */
+export type ThreadMetadataOutcome = {
+  id: string
+  kind: 'readable' | 'not-found' | 'unreadable'
+}
+
+/** Keep evidence from metadata reads separate from the list's visible rows. */
+export function threadMetadataFailures(
+  outcomes: readonly ThreadMetadataOutcome[],
+): Pick<MailPage, 'notFoundThreadIds' | 'unreadableThreadIds'> {
+  const notFound = new Set<string>()
+  const unreadable = new Set<string>()
+  for (const { id, kind } of outcomes) {
+    if (kind === 'not-found') notFound.add(id)
+    if (kind === 'unreadable') unreadable.add(id)
+  }
+  return {
+    ...(notFound.size ? { notFoundThreadIds: [...notFound] } : {}),
+    ...(unreadable.size ? { unreadableThreadIds: [...unreadable] } : {}),
+  }
+}
+
+// This applies to the unmasked threads.get metadata response, not a partial
+// projection that may intentionally omit a Thread or Message identifier.
+function verifyThreadMetadata(thread: RawThread, id: string): RawMessage[] {
+  const messages = threadMessages(thread, id, 'metadata')
+  const walk = createMimeWalk(MIME_EVIDENCE_DEPTH)
+  for (const { payload } of messages) walk(payload, () => {})
+  return messages
+}
+
+type ReadableThreadMetadata = { id: string; kind: 'readable'; messages: RawMessage[] }
+type ThreadMetadata = ReadableThreadMetadata | { id: string; kind: 'not-found' | 'unreadable' }
+
+/** Exact reads for rows and probes share one pool. Membership checks require
+ * an explicit label array on every message, unlike a previously listed row. */
+export function fetchThreadMetadata(
   api: GoogleApi,
-  ids: string[],
-  knownAddresses?: string[],
-): Promise<MailThreadSummary[]> {
-  if (ids.length === 0) return []
-
-  // ONCE per call, not once per thread: resolving a chip must not cost a
-  // request. It runs concurrently with the threads for the same reason.
-  const labelNames = fetchLabelNames(api)
-
-  const threads = await mapPooled(ids, 5, (id) =>
-    api
-      .get<RawThread>(`${BASE}/threads/${id}`, {
+  ids: Iterable<string>,
+  requireLabelsFor?: ReadonlySet<string>,
+): Promise<ThreadMetadata[]> {
+  return mapPooled([...ids], 5, async (id) => {
+    if (!isGmailMessageId(id)) return { kind: 'unreadable', id } as const
+    try {
+      const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(id)}`, {
         format: 'metadata',
         // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
         // Comma-joined, Gmail reads the whole string as one header name, matches
@@ -659,26 +545,61 @@ export async function fetchThreadSummaries(
           'Content-Type',
         ],
       })
-      .catch((error: unknown): RawThread => {
-        if (error instanceof GoogleApiError && error.status === 404) return {}
-        throw error
-      }),
-  )
+      const messages = verifyThreadMetadata(thread, id)
+      if (
+        requireLabelsFor?.has(id) &&
+        messages.some(({ labelIds }) => labelIds === undefined || labelIds.some((id) => id === ''))
+      )
+        return { kind: 'unreadable', id } as const
+      return { kind: 'readable', id, messages } as const
+    } catch (error) {
+      if (error instanceof GoogleApiError && error.status === 404)
+        return { kind: 'not-found', id } as const
+      // A transient refusal of this metadata resource is not absence. Let
+      // auth, scope and account quota errors fail the page instead.
+      if (
+        error instanceof CalendarScanError ||
+        error instanceof GoogleResourceDecodeError ||
+        error instanceof GoogleResourceTimeoutError ||
+        (error instanceof GoogleApiError &&
+          error.code === 'unknown' &&
+          (error.status === 408 || error.status >= 500))
+      )
+        return { kind: 'unreadable', id } as const
+      throw error
+    }
+  })
+}
 
-  const names = await labelNames
-  const summaries = threads
-    .map((thread) => summarize(thread, names, knownAddresses))
-    .filter((t): t is Omit<MailThreadSummary, 'hasInvite'> => t !== null)
+/** Only admitted rows need label names or invitation evidence. Reuse the
+ * exact reads that were already made to check membership. */
+export async function summarizeThreadMetadata(
+  api: GoogleApi,
+  rows: ThreadMetadata[],
+  knownAddresses?: string[],
+): Promise<MailThreadSummary[]> {
+  const readable = rows.filter((row) => row.kind === 'readable')
+  if (readable.length === 0) return []
+  return projectThreadRows(api, readable, await fetchLabelNames(api), knownAddresses)
+}
+
+async function projectThreadRows(
+  api: GoogleApi,
+  threads: ReadableThreadMetadata[],
+  names: Map<string, string>,
+  knownAddresses?: string[],
+): Promise<MailThreadSummary[]> {
+  const summaries = threads.map((thread) => summarize(thread, names, knownAddresses))
 
   // Metadata omits MIME children. Inspect only multipart MIME structure and
-  // headers for an ambiguous latest incoming; never request body bytes.
+  // headers of the latest incoming; never request body bytes.
   const { invitationIds, unknownIds } = await fetchLatestIncomingInvitations(api, threads)
   const invites = await fetchInviteIds(api, summaries)
   return summaries.map((summary) => ({
     ...summary,
     automated: summary.automated || invitationIds.has(summary.id),
     automationUnknown: unknownIds.has(summary.id),
-    hasInvite: invites.has(summary.id),
+    hasInvite: invitationIds.has(summary.id) || invites.has(summary.id),
   }))
 }
 
@@ -698,17 +619,12 @@ function mimeEvidenceFields(depth: number): string {
     : `${headers},parts(${mimeEvidenceFields(depth - 1)})`
 }
 
-function hasUnexaminedMimeDepth(part: RawPart | undefined, depth: number): boolean {
-  if (part === undefined) return false
-  if (depth === 0) return (part.parts?.length ?? 0) > 0
-  return (part.parts ?? []).some((child) => hasUnexaminedMimeDepth(child, depth - 1))
-}
-
 async function fetchLatestIncomingInvitations(
   api: GoogleApi,
   threads: RawThread[],
 ): Promise<{ invitationIds: Set<string>; unknownIds: Set<string> }> {
   const unknownIds = new Set<string>()
+  const invitationIds = new Set<string>()
   const ids = threads.flatMap((thread) => {
     if (thread.id === undefined) return []
     const messages = thread.messages ?? []
@@ -719,16 +635,10 @@ async function fetchLatestIncomingInvitations(
       return []
     }
 
-    const hasOtherEvidence = hasAutomationHeaderEvidence(payload)
-    if (hasInvitationMethod(payload)) return []
-    const contentType = headerOf(payload, 'Content-Type')
-    const mainType = parseHeaderParameters(contentType ?? '')?.main.toLowerCase()
-    const multipart =
-      payload.mimeType?.toLowerCase().startsWith('multipart/') === true ||
-      mainType?.startsWith('multipart/') === true
-    return !hasOtherEvidence && multipart
-      ? [{ threadId: thread.id, messageId: latestIncoming.id }]
-      : []
+    const { invitation, incomplete } = inspectInvitationMime(payload)
+    if (incomplete) return [{ threadId: thread.id, messageId: latestIncoming.id }]
+    if (invitation) invitationIds.add(thread.id)
+    return []
   })
 
   const results = await mapPooled(ids, 5, async ({ threadId, messageId }) => {
@@ -740,18 +650,17 @@ async function fetchLatestIncomingInvitations(
           fields: `id,threadId,payload(${mimeEvidenceFields(MIME_EVIDENCE_DEPTH)})`,
         },
       )
-      if (message.threadId !== threadId) return { threadId, invitation: false, unknown: true }
-      return {
-        threadId,
-        invitation: hasInvitationMethod(message.payload),
-        unknown:
-          message.payload === undefined ||
-          hasUnexaminedMimeDepth(message.payload, MIME_EVIDENCE_DEPTH),
-      }
+      if (message?.id !== messageId || message.threadId !== threadId || !message.payload)
+        return { threadId, invitation: false, unknown: true }
+      const { invitation, incomplete } = inspectInvitationMime(message.payload)
+      return { threadId, invitation: !incomplete && invitation, unknown: incomplete }
     } catch (error) {
       // A message can disappear after its thread metadata was fetched. Omit that
       // thread's invitation evidence; do not turn a lookup failure into proof.
-      if (error instanceof GoogleApiError && error.status === 404) {
+      if (
+        error instanceof CalendarScanError ||
+        (error instanceof GoogleApiError && error.status === 404)
+      ) {
         return { threadId, invitation: false, unknown: true }
       }
       throw error
@@ -759,9 +668,10 @@ async function fetchLatestIncomingInvitations(
   })
   const found = results.filter((result): result is NonNullable<typeof result> => result !== null)
   return {
-    invitationIds: new Set(
-      found.filter((result) => result.invitation).map((result) => result.threadId),
-    ),
+    invitationIds: new Set([
+      ...invitationIds,
+      ...found.filter((result) => result.invitation).map((result) => result.threadId),
+    ]),
     unknownIds: new Set([
       ...unknownIds,
       ...found.filter((result) => result.unknown).map((result) => result.threadId),
@@ -769,17 +679,18 @@ async function fetchLatestIncomingInvitations(
   }
 }
 
-/** Only a valid invitation method on a calendar MIME part is positive evidence. */
-function hasInvitationMethod(part: RawPart | undefined): boolean {
-  if (part === undefined) return false
-  if (part.mimeType?.toLowerCase() === 'text/calendar') {
-    const contentType = headerOf(part, 'Content-Type')
-    const method = parseHeaderParameters(contentType ?? '')?.parameters.get('method')
-    if (method !== undefined && ['request', 'reply', 'cancel'].includes(method.toLowerCase())) {
-      return true
+/** Use the walker's validated routing for both descent and probe admission. */
+function inspectInvitationMime(payload: RawPart) {
+  let invitation = false
+  let incomplete = false
+  createMimeWalk(MIME_EVIDENCE_DEPTH)(payload, (part, _location, forwarded, unexpanded) => {
+    if (unexpanded) incomplete = true
+    if (!forwarded && isCalendarPart(part)) {
+      const method = calendarMimeMethod(part)
+      if (method && ['REQUEST', 'REPLY', 'CANCEL'].includes(method)) invitation = true
     }
-  }
-  return (part.parts ?? []).some(hasInvitationMethod)
+  })
+  return { invitation, incomplete }
 }
 
 /**
@@ -813,17 +724,40 @@ async function fetchInviteIds(
   return new Set(summaries.map((s) => s.id).filter((id) => ids.has(id)))
 }
 
-/** The user's own query, the mailbox, the category tab and the unread filter,
- *  in Gmail's one grammar. */
-function composeQuery(options: ListThreadsOptions): string {
-  // The mailbox is the BASE term, so an explicit query replaces it rather than
-  // ANDing with it: searching from inside Sent searches the mailbox, the same
-  // way searching from inside a category tab leaves the tab.
-  const base = options.mailbox === 'sent' ? 'in:sent' : 'in:inbox'
-  const parts = [options.query !== undefined && options.query !== '' ? options.query : base]
-  if (options.category !== undefined) parts.push(categoryQuery(options.category))
-  if (options.unread === true) parts.push('is:unread')
-  return parts.join(' ')
+/** Build the actual Gmail query and the negative evidence available for a
+ * structural list. An explicit query replaces the mailbox, and may change
+ * how any appended term binds. Leave that grammar entirely to Gmail. */
+export function describeThreadList(options: ListThreadsOptions) {
+  const explicit = options.query !== undefined && options.query !== ''
+  const home = options.mailbox === 'sent' ? 'SENT' : 'INBOX'
+  const parts = [explicit ? options.query : `in:${home.toLowerCase()}`]
+  const requiredLabels: string[] = [home]
+  if (options.category !== undefined) {
+    parts.push(categoryQuery(options.category))
+    const categoryLabel = Object.keys(CATEGORY_BY_LABEL).find(
+      (id) => CATEGORY_BY_LABEL[id] === options.category,
+    )
+    if (categoryLabel !== undefined) requiredLabels.push(categoryLabel)
+  }
+  if (options.unread === true) {
+    parts.push('is:unread')
+    requiredLabels.push('UNREAD')
+  }
+  return {
+    q: parts.join(' '),
+    mailboxLabel: explicit ? null : home,
+    excludes({ messages }: ReadableThreadMetadata): boolean {
+      if (explicit || messages.some(({ labelIds }) => labelIds === undefined)) return false
+      // A history entry is about one message, not its whole conversation.
+      // Use the union only for negative proof; Gmail decides positive matches.
+      const labels = new Set(messages.flatMap(({ labelIds }) => labelIds ?? []))
+      return (
+        requiredLabels.some((id) => !labels.has(id)) ||
+        // threads.list doesn't opt into Spam or Trash for structural lists.
+        messages.every(({ labelIds }) => labelIds!.includes('SPAM') || labelIds!.includes('TRASH'))
+      )
+    },
+  }
 }
 
 /**
@@ -899,55 +833,6 @@ function validUnsubscribeUri(candidate: string): string | null {
   return null
 }
 
-/** Parse a header value and its complete RFC-style parameter list. */
-function parseHeaderParameters(
-  value: string,
-): { main: string; parameters: Map<string, string> } | null {
-  const parts: string[] = []
-  let part = ''
-  let quoted = false
-  let escaped = false
-  for (const character of value) {
-    if (escaped) {
-      part += character
-      escaped = false
-    } else if (quoted && character === '\\') {
-      part += character
-      escaped = true
-    } else if (character === '"') {
-      quoted = !quoted
-      part += character
-    } else if (character === ';' && !quoted) {
-      parts.push(part.trim())
-      part = ''
-    } else {
-      part += character
-    }
-  }
-  if (quoted || escaped) return null
-  parts.push(part.trim())
-  const main = parts.shift()
-  if (!main) return null
-  const parameters = new Map<string, string>()
-  for (const entry of parts) {
-    const match = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+)\s*=\s*(.*)$/.exec(entry)
-    if (!match || !match[2]) return null
-    const name = match[1]!.toLowerCase()
-    const raw = match[2]!
-    let parsed: string
-    if (raw.startsWith('"')) {
-      if (!/^"(?:[^"\\]|\\[\s\S])*"$/.test(raw)) return null
-      parsed = raw.slice(1, -1).replace(/\\([\s\S])/g, '$1')
-    } else {
-      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(raw)) return null
-      parsed = raw
-    }
-    if (parameters.has(name)) return null
-    parameters.set(name, parsed)
-  }
-  return { main, parameters }
-}
-
 function validListId(value: string | null): boolean {
   if (value === null) return false
   const match =
@@ -982,14 +867,13 @@ function latestIncomingOf(messages: RawMessage[]): RawMessage | undefined {
 /** Everything derivable from the metadata fetch: everything except
  *  `hasInvite`. */
 function summarize(
-  thread: RawThread,
+  thread: { id: string; messages: RawMessage[] },
   labelNames: Map<string, string>,
   knownAddresses?: string[],
-): Omit<MailThreadSummary, 'hasInvite'> | null {
-  const messages = thread.messages ?? []
-  const first = messages[0]
-  const last = messages[messages.length - 1]
-  if (thread.id === undefined || first === undefined || last === undefined) return null
+): Omit<MailThreadSummary, 'hasInvite'> {
+  const { messages } = thread
+  const first = messages[0]!
+  const last = messages.at(-1)!
 
   // A label anywhere in the thread applies to the thread, as in Gmail's own list.
   const allLabels = messages.flatMap((m) => m.labelIds ?? [])
@@ -1015,17 +899,6 @@ function summarize(
     own !== null && addresses.some((address) => own.has(address.email))
   const listEvidence =
     latestIncoming !== undefined && hasAutomationHeaderEvidence(latestIncoming.payload)
-  const contentType =
-    latestIncoming === undefined ? null : headerOf(latestIncoming.payload, 'Content-Type')
-  const mimeType = contentType?.split(';', 1)[0]?.trim().toLowerCase()
-  // Only a genuine invitation method is positive evidence. PUBLISH calendars and
-  // arbitrary text/attachments mentioning calendar are not necessarily automation.
-  const calendarParameters = contentType === null ? null : parseHeaderParameters(contentType)
-  const invitation =
-    mimeType === 'text/calendar' &&
-    ['request', 'reply', 'cancel'].includes(
-      calendarParameters?.parameters.get('method')?.toLowerCase() ?? '',
-    )
 
   return {
     id: thread.id,
@@ -1076,7 +949,7 @@ function summarize(
               ? 'cc'
               : 'neither',
     // Conservative evidence only; unknown MIME depth is reported separately.
-    automated: latestIncoming !== undefined && (listEvidence || invitation),
+    automated: listEvidence,
     needsReply:
       latestIncoming !== undefined &&
       messages.indexOf(latestIncoming) >
@@ -1092,7 +965,8 @@ function summarize(
  *  header is written by the sender and is routinely wrong or absent. */
 function isoDate(message: RawMessage): string {
   const internal = Number(message.internalDate)
-  if (Number.isFinite(internal) && internal > 0) return new Date(internal).toISOString()
+  if (Number.isFinite(internal) && internal > 0 && internal <= 8_640_000_000_000_000)
+    return new Date(internal).toISOString()
   const header = headerOf(message.payload, 'Date')
   const parsed = header === null ? NaN : Date.parse(header)
   return Number.isNaN(parsed) ? '' : new Date(parsed).toISOString()
@@ -1100,27 +974,51 @@ function isoDate(message: RawMessage): string {
 
 /** One thread, with every message in both representations (see the module note). */
 export async function readThread(api: GoogleApi, threadId: string): Promise<MailThread> {
-  const thread = await api.get<RawThread>(`${BASE}/threads/${threadId}`, { format: 'full' })
-  const messages = thread.messages ?? []
+  const messages = await fetchFullThread(api, threadId)
+  const walk = createMimeWalk()
+  let bodyBudget = 16 * 1024 * 1024
+  const projected = messages.map((message): MailMessage => {
+    const preferred: PreferredBody = { plain: null, html: null }
+    let hasCalendarPayload = false
+    const attachments: MailAttachment[] = []
+    walk(message.payload, (part, location, forwarded) => {
+      if (part.filename) {
+        attachments.push({
+          filename: part.filename,
+          mimeType: part.mimeType ?? 'application/octet-stream',
+          size: part.body?.size ?? 0,
+        })
+      }
+      if (!forwarded && isCalendarPart(part)) hasCalendarPayload = true
+      considerBody(preferred, part, location.path === '0', forwarded)
+    })
+    const { plain, html, fallback } = preferred
+    // Charge only data that will actually be decoded, including the root fallback.
+    for (const part of new Set([plain ?? html ?? fallback, html])) {
+      const data = part?.body?.data
+      if (data === undefined) continue
+      if (typeof data !== 'string' || (bodyBudget -= data.length) < 0)
+        throw new CalendarScanError('Gmail MIME data exceeds the reader limits')
+    }
+    return {
+      id: message.id,
+      from: parseAddress(headerOf(message.payload, 'From')),
+      to: parseAddresses(headerOf(message.payload, 'To')),
+      cc: parseAddresses(headerOf(message.payload, 'Cc')),
+      bcc: parseAddresses(headerOf(message.payload, 'Bcc')),
+      date: isoDate(message),
+      body: projectText(plain, html, fallback),
+      html: decodeBody(html?.body?.data) || null,
+      attachments,
+      hasCalendarPayload: !message.labelIds?.includes('DRAFT') && hasCalendarPayload,
+    }
+  })
   const first = messages[0]
-
   return {
     id: threadId,
     subject: headerOf(first?.payload, 'Subject')?.trim() || '(no subject)',
     webUrl: messageUrl(headerOf(first?.payload, 'Message-ID'), threadId),
-    messages: messages.map((message) => ({
-      id: message.id ?? '',
-      from: parseAddress(headerOf(message.payload, 'From')),
-      to: parseAddresses(headerOf(message.payload, 'To')),
-      cc: parseAddresses(headerOf(message.payload, 'Cc')),
-      // Present only on the account's own sent copy: see `MailMessage.bcc`.
-      // No extra request: this thread is already read at `format=full`.
-      bcc: parseAddresses(headerOf(message.payload, 'Bcc')),
-      date: isoDate(message),
-      body: bodyTextOf(message.payload),
-      html: bodyHtmlOf(message.payload),
-      attachments: attachmentsOf(message.payload),
-    })),
+    messages: projected,
   }
 }
 
@@ -1171,7 +1069,7 @@ export function textOnly(
     id: thread.id,
     subject: thread.subject,
     webUrl: thread.webUrl,
-    messages: thread.messages.map(({ html: _html, ...message }) => ({
+    messages: thread.messages.map(({ html: _html, hasCalendarPayload: _calendar, ...message }) => ({
       ...message,
       body: full
         ? message.body
@@ -1372,61 +1270,14 @@ export async function createDraft(
   return { id: draft?.id ?? updateId ?? null }
 }
 
-function normalizeMessageIds(value: string): string[] | null {
-  const unfolded = value.replace(/\r\n[\t ]+/g, ' ')
-  if (/[\r\n]/.test(unfolded)) return null
-  let clean = ''
-  let comments = 0
-  let escaped = false
-  let quoted = false
-  for (const char of unfolded) {
-    if (escaped) {
-      if (comments === 0) clean += char
-      escaped = false
-    } else if (char === '\\') {
-      if (comments === 0) clean += char
-      escaped = true
-    } else if (comments > 0) {
-      if (char === '(') comments++
-      else if (char === ')') comments--
-    } else if (char === '"') {
-      quoted = !quoted
-      clean += char
-    } else if (char === '(' && !quoted) comments++
-    else clean += char
-  }
-  if (comments !== 0 || escaped || quoted) return null
-  const text = clean.trim()
-  if (text === '') return []
-  const ids = text.match(/<[^<>]+>/g) ?? []
-  if (ids.length === 0 || !/^\s*$/.test(text.replace(/<[^<>]+>/g, ''))) return null
-  const valid = ids.every((token) => {
-    const id = token.slice(1, -1)
-    const at = id.lastIndexOf('@')
-    if (at < 1 || at === id.length - 1) return false
-    const atom = "[A-Za-z0-9!#$%&'*+\\-/=?^_`{|}~]+"
-    const local = id.slice(0, at)
-    const domain = id.slice(at + 1)
-    return (
-      new RegExp(`^(?:${atom}(?:\\.${atom})*|\"(?:[^\"\\\\\\r\\n]|\\\\[\\x00-\\x7f])*\")$`).test(
-        local,
-      ) && new RegExp(`^(?:${atom}(?:\\.${atom})*|\\[[^\\]\\r\\n]+\\])$`).test(domain)
-    )
-  })
-  return valid ? ids : null
-}
-
 async function replyHeaders(
   api: GoogleApi,
   threadId: string,
 ): Promise<Pick<OutgoingMail, 'inReplyTo' | 'references'>> {
   if (!threadId.trim() || /[\r\n]/.test(threadId)) throw new Error('invalid thread id')
-  const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
-    format: 'full',
-  })
-  const parent = [...(thread.messages ?? [])]
-    .reverse()
-    .find((message) => !message.labelIds?.includes('DRAFT'))
+  const messages = await fetchFullThread(api, threadId)
+  const parent = [...messages].reverse().find((message) => !message.labelIds?.includes('DRAFT'))
+  createMimeWalk()(parent?.payload, () => {})
   const messageId = headerOf(parent?.payload, 'Message-ID')
   const ids = messageId === null ? null : normalizeMessageIds(messageId)
   if (ids?.length !== 1) throw new Error('thread has no valid Message-ID to reply to')
@@ -1773,67 +1624,6 @@ export async function fetchAttachment(
   }
 }
 
-/**
- * The `.ics` in a thread, as text, or null when there is none.
- *
- * Owns the Gmail half of the meeting lookup and nothing else: which part is the
- * invite, and how to get its bytes. What the bytes *mean* is `invite.ts`.
- *
- * Two shapes, because invites arrive in both and only one of them costs a
- * request. Outlook attaches the invite (`filename: 'invite.ics'`, bytes behind
- * an `attachmentId`); Google Calendar sends `text/calendar` **inline**, with the
- * data in the part itself.
- *
- * `format: 'full'`, the expensive fetch this module normally refuses. It is
- * affordable here because this runs for ONE thread, only when a reader has
- * already opened it.
- */
-export async function fetchThreadIcs(api: GoogleApi, threadId: string): Promise<string | null> {
-  const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
-    format: 'full',
-  })
-
-  for (const message of thread.messages ?? []) {
-    const part = calendarPartOf(message.payload)
-    if (part === undefined) continue
-
-    // Inline: already in hand, no second request.
-    if (part.body?.data !== undefined) {
-      return Buffer.from(part.body.data, 'base64url').toString('utf8')
-    }
-    const attachmentId = part.body?.attachmentId
-    if (attachmentId === undefined || message.id === undefined) continue
-    const fetched = await fetchAttachment(api, message.id, attachmentId, {
-      filename: part.filename ?? 'invite.ics',
-      mimeType: part.mimeType ?? 'text/calendar',
-    })
-    return Buffer.from(fetched.data, 'base64').toString('utf8')
-  }
-  return null
-}
-
-/**
- * The calendar part anywhere in a MIME tree.
- *
- * Both tests, not one: Outlook sends `text/calendar` but also `application/ics`
- * and occasionally `application/octet-stream` with an `.ics` name, so matching
- * on the type alone misses real invites and matching on the name alone misses
- * the inline part, which has no filename.
- */
-function calendarPartOf(part: RawPart | undefined): RawPart | undefined {
-  if (part === undefined) return undefined
-  const type = part.mimeType?.toLowerCase() ?? ''
-  const name = part.filename?.toLowerCase() ?? ''
-  if (type.startsWith('text/calendar') || type === 'application/ics' || name.endsWith('.ics')) {
-    return part
-  }
-  for (const child of part.parts ?? []) {
-    const found = calendarPartOf(child)
-    if (found !== undefined) return found
-  }
-  return undefined
-}
-
 /** Gmail omits `threadId` on a loose draft; `null` is "belongs to no thread". */
 function threadIdOf(message: RawMessage | undefined): string | null {
   const threadId = message?.threadId
@@ -1842,8 +1632,7 @@ function threadIdOf(message: RawMessage | undefined): string | null {
 
 /**
  * An attachment as it appears in a message payload, with the id needed to
- * fetch it. `attachmentsOf` deliberately drops that id: it feeds the reader,
- * which shows names and sizes and never downloads anything.
+ * fetch it. The reader shows only names and sizes and never downloads anything.
  */
 interface AttachmentRef {
   filename: string
@@ -1855,33 +1644,29 @@ interface AttachmentRef {
 }
 
 function attachmentRefsOf(part: RawPart | undefined): AttachmentRef[] {
-  if (part === undefined) return []
-  const body = part.body
-  const here: AttachmentRef[] =
-    part.filename !== undefined &&
-    part.filename !== '' &&
-    body !== undefined &&
-    (body.attachmentId !== undefined || body.data !== undefined || body.size === 0)
-      ? [
-          {
-            filename: part.filename,
-            mimeType: part.mimeType ?? 'application/octet-stream',
-            ...(body.attachmentId === undefined ? {} : { attachmentId: body.attachmentId }),
-            ...(body.data === undefined
-              ? body.size === 0
-                ? { data: '' }
-                : {}
-              : { data: body.data }),
-            ...(headerOf(part, 'Content-Disposition')?.toLowerCase().startsWith('inline')
-              ? { disposition: 'inline' as const }
-              : {}),
-            ...(headerOf(part, 'Content-ID') === null
-              ? {}
-              : { contentId: headerOf(part, 'Content-ID')! }),
-          },
-        ]
-      : []
-  return [...here, ...(part.parts ?? []).flatMap((child) => attachmentRefsOf(child))]
+  const refs: AttachmentRef[] = []
+  createMimeWalk()(part, (part) => {
+    const body = part.body
+    if (
+      part.filename !== undefined &&
+      part.filename !== '' &&
+      body !== undefined &&
+      (body.attachmentId !== undefined || body.data !== undefined || body.size === 0)
+    )
+      refs.push({
+        filename: part.filename,
+        mimeType: part.mimeType ?? 'application/octet-stream',
+        ...(body.attachmentId === undefined ? {} : { attachmentId: body.attachmentId }),
+        ...(body.data === undefined ? (body.size === 0 ? { data: '' } : {}) : { data: body.data }),
+        ...(headerOf(part, 'Content-Disposition')?.toLowerCase().startsWith('inline')
+          ? { disposition: 'inline' as const }
+          : {}),
+        ...(headerOf(part, 'Content-ID') === null
+          ? {}
+          : { contentId: headerOf(part, 'Content-ID')! }),
+      })
+  })
+  return refs
 }
 
 async function draftAttachments(api: GoogleApi, draftId: string): Promise<MailPart[]> {

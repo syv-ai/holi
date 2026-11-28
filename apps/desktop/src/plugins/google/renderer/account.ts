@@ -16,7 +16,7 @@
  */
 import { atom, useAtomValue, useSetAtom, useStore, type Atom } from 'jotai'
 import { unwrap } from 'jotai/utils'
-import { activeRemoteAtom } from '@/plugin-api'
+import { activeRemoteAtom, activeRemoteRevisionValueAtom } from '@/plugin-api'
 import { googleCap } from './google-cap'
 import type { GoogleAccount } from '../main/session'
 
@@ -211,6 +211,65 @@ const currentConnectionReadAtom = atom((get): ConnectionRead | undefined => {
   const held = get(heldConnectionReadAtom)
   return held !== undefined && held.remote === get(activeRemoteAtom) ? held : undefined
 })
+
+interface MailContinuity {
+  remoteRevision: number
+  accountRevision: number
+  account: string | null
+  epoch: object
+  pending: number
+  lost: boolean
+}
+
+const mailContinuityState = atom<MailContinuity | null>(null)
+
+/** One Mail-only epoch for the current vault link. Any list can lose
+ * continuity for a reader opened from any page, not just that list's rows. */
+export const mailContinuityAtom = atom(
+  (get) => {
+    const state = get(mailContinuityState)
+    return state &&
+      state.remoteRevision === get(activeRemoteRevisionValueAtom) &&
+      state.accountRevision === get(googleAccountRevisionAtom) &&
+      state.account === (get(currentConnectionReadAtom)?.connection?.currentSub ?? null)
+      ? state
+      : null
+  },
+  (get, set, action: 'lost' | 'reset') => {
+    const before = get(mailContinuityAtom)
+    if (action === 'lost' && (before?.lost || before?.pending)) return
+    const actor = {
+      remoteRevision: get(activeRemoteRevisionValueAtom),
+      accountRevision: get(googleAccountRevisionAtom),
+      account: get(currentConnectionReadAtom)?.connection?.currentSub ?? null,
+    }
+    set(mailContinuityState, {
+      ...actor,
+      epoch: {},
+      pending: action === 'reset' ? (before?.pending ?? 0) + 1 : 0,
+      lost: !before?.pending || before.lost,
+    })
+    if (action !== 'reset') return
+    let finished = false
+    return (published: boolean) => {
+      if (finished) return
+      finished = true
+      const current = get(mailContinuityAtom)
+      if (
+        current?.remoteRevision === actor.remoteRevision &&
+        current.accountRevision === actor.accountRevision &&
+        current.account === actor.account
+      ) {
+        // Older attempts cannot settle the newest epoch on their own.
+        set(mailContinuityState, {
+          ...current,
+          pending: current.pending - 1,
+          lost: current.lost && !published,
+        })
+      }
+    }
+  },
+)
 
 /** `undefined`: not asked yet. `null`: asked, nothing connected. */
 const googleAccountAtom = atom(

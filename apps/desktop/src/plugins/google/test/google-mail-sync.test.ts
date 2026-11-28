@@ -12,9 +12,21 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GoogleApi } from '../main/api'
+import { emptyVaultSnapshot } from '@holi/shared'
+import { createCapabilityRegistry } from '../../../main/capabilities/registry'
+import { noCoreServices } from '../../../main/capabilities/services'
+import { GoogleApi, type GoogleApiDeps } from '../main/api'
 import { openGoogleCache, type GoogleCache } from '../main/cache'
+import {
+  disposeGoogleCapabilities,
+  googleCapabilities,
+  GOOGLE_NAMESPACES,
+  type GoogleCapabilityDeps,
+} from '../main/capabilities'
+import { createGoogleData } from '../main/data'
+import { readThread, type MailPage } from '../main/gmail'
 import { cacheKey, syncThreads } from '../main/mail-sync'
 
 let dir: string
@@ -64,6 +76,8 @@ interface Routes {
   list?: { id: string }[]
   listPages?: Record<string, { threads: { id: string }[]; nextPageToken?: string }>
   threads?: Record<string, unknown>
+  /** Headers-only `messages.get` responses; no MIME bodies. */
+  mimeProbes?: Record<string, unknown>
   /** `history.list`. A number means "answer this status instead". */
   history?: unknown | number
   historyPages?: Record<string, unknown | number>
@@ -73,18 +87,31 @@ interface Routes {
 }
 
 /** A fake Gmail covering list, get, history, labels and profile. */
-function gmail(routes: Routes) {
+function gmail(
+  routes: Routes,
+  deps: Partial<Omit<GoogleApiDeps, 'fetch'>> = {},
+  override?: (url: URL, signal: AbortSignal) => Promise<Response> | undefined,
+) {
   const seen: string[] = []
-  const fetchImpl = vi.fn(async (url: string) => {
-    seen.push(url)
-    const path = new URL(url).pathname
-    const ok = (body: unknown) => ({
-      ok: true,
-      status: 200,
-      json: async () => body,
-      text: async () => JSON.stringify(body),
-    })
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input))
+    seen.push(url.href)
+    if (init?.method && init.method !== 'GET') throw new Error('Mail sync must only read')
+    const signal = init?.signal
+    if (!signal) throw new Error('Expected an abortable Google request')
+    signal.throwIfAborted()
+    const response = override?.(url, signal)
+    if (response !== undefined) return response
+    const path = url.pathname
+    const ok = (body: unknown) => Response.json(body)
 
+    // Mail access can work on a grant that cannot list send-as aliases.
+    if (path.endsWith('/settings/sendAs')) {
+      return Response.json(
+        { error: { errors: [{ reason: 'insufficientPermissions' }] } },
+        { status: 403 },
+      )
+    }
     if (path.endsWith('/labels')) return ok({ labels: [] })
     if (path.endsWith('/profile')) return ok(routes.profile ?? { historyId: '5000' })
     if (path.endsWith('/history')) {
@@ -93,31 +120,187 @@ function gmail(routes: Routes) {
       if (typeof historyPage === 'number') {
         // Gmail answers 404 when `startHistoryId` is older than it keeps —
         // roughly a week. A NORMAL outcome, not an error.
-        return { ok: false, status: historyPage, text: async () => '{}', json: async () => ({}) }
+        return Response.json({}, { status: historyPage })
       }
       return ok(historyPage ?? { historyId: '5000' })
     }
     if (path.endsWith('/threads')) {
-      const token = new URL(url).searchParams.get('pageToken') ?? ''
-      return ok(routes.listPages?.[token] ?? { threads: routes.list ?? [] })
+      const params = new URL(url).searchParams
+      if (params.get('q')?.includes('filename:ics')) return ok({})
+      return ok(routes.listPages?.[params.get('pageToken') ?? ''] ?? { threads: routes.list ?? [] })
     }
-    const threadId = path.split('/').pop()!
+    const mimeProbe = /\/messages\/([^/]+)$/.exec(path)
+    if (mimeProbe) {
+      const params = new URL(url).searchParams
+      const fields = params.get('fields') ?? ''
+      if (
+        params.get('format') !== 'full' ||
+        !fields.includes('parts(') ||
+        /body|data|attachmentId/i.test(fields)
+      )
+        throw new Error('Expected a masked MIME structure probe')
+      const probe = routes.mimeProbes?.[mimeProbe[1]!]
+      if (!probe) throw new Error('No message for MIME structure probe')
+      return ok(probe)
+    }
+    const metadata = /\/threads\/([^/]+)$/.exec(path)
+    if (!metadata || url.searchParams.get('format') !== 'metadata')
+      throw new Error(`Unexpected Gmail read: ${url}`)
+    const threadId = metadata[1]!
     if (routes.missingThreads?.includes(threadId)) {
-      return { ok: false, status: 404, text: async () => '{}', json: async () => ({}) }
+      return Response.json({ error: { code: 404, status: 'NOT_FOUND' } }, { status: 404 })
     }
     if (routes.failedThreads?.includes(threadId)) {
-      return { ok: false, status: 500, text: async () => '{}', json: async () => ({}) }
+      return Response.json({ error: { code: 503, status: 'UNAVAILABLE' } }, { status: 503 })
     }
     return ok(routes.threads?.[threadId] ?? {})
-  }) as unknown as typeof globalThis.fetch
+  }
 
-  return { api: new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }), seen }
+  return { api: new GoogleApi({ accessToken: async () => 'at', ...deps, fetch }), seen }
+}
+
+/** The UI search capability with real Google data and cache for one connected vault. */
+function mailSearch(api: GoogleApi) {
+  const remote = 'owner/inbox'
+  const data = createGoogleData({ api: () => api, cache })
+  const session = { accountSub: 'account', getAccessToken: async () => 'at' }
+  let linked = true
+  const capabilities = googleCapabilities({
+    accounts: {
+      bindingFor: async () =>
+        linked
+          ? {
+              session,
+              revision: 'link',
+              isCurrent: () => linked,
+            }
+          : null,
+    } as unknown as GoogleCapabilityDeps['accounts'],
+    dataFor: async (caller) => (caller === remote ? data : null),
+    dataForSession: () => data,
+    settings: {
+      read: async () => ({ calendars: {}, imageSenders: [], imagesFromAllSenders: false }),
+      write: async () => {},
+    },
+  })
+  const registry = createCapabilityRegistry()
+  registry.register(GOOGLE_NAMESPACES, capabilities)
+  return {
+    unlink: () => {
+      linked = false
+    },
+    close: () => disposeGoogleCapabilities(capabilities),
+    async search(params = {}, door: 'ui' | 'cli' | 'app' = 'ui'): Promise<MailPage> {
+      const { value } = await registry.run(
+        'google.search',
+        door,
+        {
+          remote,
+          root: remote,
+          bundle: null,
+          snapshot: async () => emptyVaultSnapshot(),
+          claims: async () => [],
+          core: noCoreServices(),
+        },
+        params,
+        door === 'app'
+          ? async (_ctx, grant) => {
+              if (grant !== 'mail')
+                throw new Error('Only this vault app’s mail access was approved')
+            }
+          : undefined,
+      )
+      return value as MailPage
+    },
+  }
+}
+
+async function searchMail(api: GoogleApi, params = {}): Promise<MailPage> {
+  const mail = mailSearch(api)
+  try {
+    return await mail.search(params)
+  } finally {
+    mail.close()
+  }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
+/** Drive the request's native signal deterministically, without waiting for a timer. */
+function captureDeadlines() {
+  const requests = new WeakMap<AbortSignal, AbortController>()
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => {
+    const controller = new AbortController()
+    requests.set(controller.signal, controller)
+    return controller.signal
+  })
+  return {
+    expire(signal: AbortSignal) {
+      const request = requests.get(signal)
+      if (!request) throw new Error('Expected the request deadline signal')
+      request.abort(new DOMException('The operation timed out', 'TimeoutError'))
+    },
+    restore: () => timeout.mockRestore(),
+  }
+}
+
+/** A fetch waiting for headers rejects with the abort reason, not a response. */
+function beforeHeaders(signal: AbortSignal): Promise<Response> {
+  return new Promise((_, reject) => {
+    if (signal.aborted) reject(signal.reason)
+    else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+  })
 }
 
 /** How many `threads.get` calls were made — the cost this whole module exists
  *  to avoid paying twice. */
 function threadGets(seen: string[]): string[] {
   return seen.filter((u) => /\/threads\/[^/?]+/.test(new URL(u).pathname))
+}
+
+/** Gmail lists ids only, with an opaque continuation tied to a query. */
+function mailboxPage(url: URL, query: string, matches: { id: string }[]) {
+  const params = url.searchParams
+  if (params.get('q') !== query || params.get('maxResults') !== '25')
+    throw new Error('Unexpected mailbox query or page size')
+  const token = params.get('pageToken')
+  const offset = token === null ? 0 : Number(token.match(/^after-(\d+)$/)?.[1])
+  if (!Number.isInteger(offset) || offset % 25 || offset >= matches.length)
+    throw new Error('Invalid mailbox page token')
+  const next = offset + 25
+  return Response.json({
+    threads: matches.slice(offset, next).map(({ id }) => ({ id })),
+    ...(next < matches.length ? { nextPageToken: `after-${next}` } : {}),
+  })
+}
+
+function largeInbox(labels = ['INBOX']) {
+  return Array.from({ length: 525 }, (_, i) => rawThread(`inbox-${i}`, `Inbox ${i}`, labels))
+}
+
+function pagedMailbox(query: string, matches: ReturnType<typeof rawThread>[], routes: Routes = {}) {
+  return gmail(
+    {
+      ...routes,
+      threads: { ...Object.fromEntries(matches.map((t) => [t.id, t])), ...routes.threads },
+    },
+    {},
+    (url) => {
+      if (
+        url.pathname.endsWith('/threads') &&
+        !url.searchParams.get('q')?.startsWith('has:attachment ')
+      )
+        return Promise.resolve(mailboxPage(url, query, matches))
+    },
+  )
 }
 
 describe('syncThreads', () => {
@@ -132,6 +315,28 @@ describe('syncThreads', () => {
     expect(page.threads.map((t) => t.subject)).toEqual(['One', 'Two'])
     expect(threadGets(seen)).toHaveLength(2)
   })
+
+  it.each([{}, { freshPage: true }, { refresh: true }])(
+    'reports current first-page metadata 404s without mistaking a 503 for absence (%j)',
+    async (context) => {
+      const { api } = gmail({
+        listPages: {
+          '': {
+            threads: [{ id: 'gone' }, { id: 'unreadable' }, { id: 'healthy' }],
+            nextPageToken: 'page-2',
+          },
+        },
+        missingThreads: ['gone'],
+        failedThreads: ['unreadable'],
+        threads: { healthy: rawThread('healthy', 'Still here') },
+      })
+      const page = await syncThreads(api, cache, {}, undefined, context)
+      expect(page.threads.map(({ id }) => id)).toEqual(['healthy'])
+      expect(page.nextPageToken).toBe('page-2')
+      expect(page.notFoundThreadIds).toEqual(['gone'])
+      expect(page.unreadableThreadIds).toEqual(['unreadable'])
+    },
+  )
 
   it('fetches each needs-reply page fresh without sharing the ordinary list cache', async () => {
     const cold = gmail({ listPages: { '': { threads: [], nextPageToken: 'cold-next' } } })
@@ -218,6 +423,57 @@ describe('syncThreads', () => {
     expect(threadGets(second.seen)).toHaveLength(0)
   })
 
+  it('rebuilds an older invitation classification even when mailbox history is unchanged', async () => {
+    const id = 't1'
+    const messageId = 't1-m1'
+    const metadata = rawThread(id, 'Inline invite')
+    const payload = {
+      mimeType: 'application/octet-stream',
+      headers: [
+        ...metadata.messages[0]!.payload.headers,
+        {
+          name: 'Content-Type',
+          value: '(outer (comment)) multipart (type) / mixed; boundary="invite"',
+        },
+      ],
+    }
+    const provider = gmail({
+      list: [{ id }],
+      threads: { [id]: { id, messages: [{ ...metadata.messages[0], payload }] } },
+      mimeProbes: {
+        [messageId]: {
+          id: messageId,
+          threadId: id,
+          payload: { ...payload, parts: [{ mimeType: 'text/calendar; method=REQUEST' }] },
+        },
+      },
+      history: { historyId: '5000' },
+    })
+    const key = cacheKey({})
+    const current = await syncThreads(provider.api, cache, {})
+    // Persist the previous release's classification of the same provider row.
+    cache.writeThreads(
+      key,
+      current.threads.map((thread) => ({ ...thread, hasInvite: false, automated: false })),
+    )
+    cache.close()
+    const path = join(dir, 'cache.db')
+    const legacy = new DatabaseSync(path)
+    legacy.prepare("UPDATE meta SET value = '6' WHERE key = 'shape'").run()
+    legacy.close()
+
+    cache = openGoogleCache(path)
+    cache.ensureShape()
+    const upgraded = await syncThreads(provider.api, cache, {})
+    expect(upgraded.threads).toMatchObject([{ id, hasInvite: true, automated: true }])
+
+    cache.close()
+    cache = openGoogleCache(path)
+    cache.ensureShape()
+    const unchanged = gmail({ history: { historyId: '5000' } })
+    expect((await syncThreads(unchanged.api, cache, {})).threads).toMatchObject(upgraded.threads)
+  })
+
   it('observes sent-only changes for cached inbox threads without importing unrelated threads', async () => {
     const first = gmail({
       list: [{ id: 'cached' }],
@@ -247,9 +503,135 @@ describe('syncThreads', () => {
 
     expect(page.threads.map((thread) => thread.id)).toEqual(['cached'])
     expect(page.threads[0]!.replied).toBe(true)
-    expect(threadGets(second.seen)).toHaveLength(1)
+    expect(threadGets(second.seen).length).toBeLessThanOrEqual(2)
     const historyUrl = second.seen.find((url) => new URL(url).pathname.endsWith('/history'))!
     expect(new URL(historyUrl).searchParams.has('labelId')).toBe(false)
+  })
+
+  it.each(['new Sent-only conversation', 'Sent reply to an off-page inbox conversation'])(
+    'refreshes a large default Inbox after a %s',
+    async (kind) => {
+      const mailbox = largeInbox()
+      const mixed = kind !== 'new Sent-only conversation'
+      const target = mixed ? mailbox[30]! : rawThread('sent-only', 'New outgoing mail', ['SENT'])
+      const sent = message('outgoing', target.id, [['From', 'Me <me@example.com>']], ['SENT'])
+      const first = pagedMailbox('in:inbox', mailbox)
+      const seed = await searchMail(first.api)
+      const firstPageIds = mailbox.slice(0, 25).map(({ id }) => id)
+      expect(seed.threads.map(({ id }) => id)).toEqual(firstPageIds)
+      expect(seed.nextPageToken).not.toBeNull()
+
+      const delta = pagedMailbox('in:inbox', mailbox, {
+        threads: {
+          [target.id]: { id: target.id, messages: mixed ? [...target.messages, sent] : [sent] },
+        },
+        history: {
+          historyId: '5001',
+          history: [
+            {
+              messagesAdded: [
+                { message: { id: sent.id, threadId: sent.threadId, labelIds: ['SENT'] } },
+              ],
+            },
+          ],
+        },
+      })
+      const page = await searchMail(delta.api)
+      expect(page).not.toHaveProperty('historyRecoveryRequired')
+      expect(page).not.toHaveProperty('unreadableThreadIds')
+      expect(page).not.toHaveProperty('notFoundThreadIds')
+      expect(page.threads.filter(({ id }) => id !== target.id).map(({ id }) => id)).toEqual(
+        firstPageIds,
+      )
+      if (mixed) {
+        expect(page.threads.find(({ id }) => id === target.id)).toMatchObject({ replied: true })
+      } else {
+        expect(page.threads.some(({ id }) => id === target.id)).toBe(false)
+      }
+      const mailboxReads = delta.seen.filter(
+        (request) => new URL(request).searchParams.get('q') === 'in:inbox',
+      )
+      expect(mailboxReads.length).toBeLessThanOrEqual(mixed ? 2 : 0)
+      expect(threadGets(delta.seen).length).toBeLessThanOrEqual(1)
+      expect(delta.seen.length).toBeLessThanOrEqual(mixed ? 8 : 4)
+      expect(delta.seen.some((request) => new URL(request).pathname.endsWith('/profile'))).toBe(
+        false,
+      )
+
+      const next = gmail({}, {}, (url) => {
+        if (!url.pathname.endsWith('/history'))
+          throw new Error('Expected a delta from the new cursor')
+        return Promise.resolve(
+          url.searchParams.get('startHistoryId') === '5001'
+            ? Response.json({ historyId: '5001' })
+            : Response.json({}, { status: 400 }),
+        )
+      })
+      const unchanged = await searchMail(next.api)
+      expect(unchanged.threads).toEqual(page.threads)
+      expect(unchanged).not.toHaveProperty('historyRecoveryRequired')
+    },
+  )
+
+  it('rules out structural tab nonmembers but retries incomplete whole-thread metadata', async () => {
+    const mailbox = largeInbox(['INBOX', 'CATEGORY_UPDATES'])
+    const query = 'in:inbox category:updates'
+    const options = { category: 'updates' }
+    const first = await searchMail(pagedMailbox(query, mailbox).api, options)
+    const otherTab = rawThread('other-tab', 'Promotional mail', ['INBOX', 'CATEGORY_PROMOTIONS'])
+    const trashed = rawThread('trashed', 'Trashed update', ['INBOX', 'CATEGORY_UPDATES', 'TRASH'])
+    const sent = rawThread('unverified', 'Sent only', ['SENT'])
+    const partial = {
+      id: sent.id,
+      messages: [sent.messages[0], { id: 'unverified-m2', threadId: sent.id, payload: {} }],
+    }
+    const delta = pagedMailbox(query, mailbox, {
+      threads: { [otherTab.id]: otherTab, [trashed.id]: trashed, [sent.id]: partial },
+      history: {
+        historyId: '5001',
+        history: [
+          {
+            messagesAdded: [otherTab, trashed, sent].map(({ id, messages }) => ({
+              message: { id: messages[0]!.id, threadId: id },
+            })),
+          },
+        ],
+      },
+    })
+    const page = await searchMail(delta.api, options)
+    expect(page.threads).toEqual(first.threads)
+    expect(page.unreadableThreadIds).toEqual([sent.id])
+    expect(page).not.toHaveProperty('historyRecoveryRequired')
+    expect(page).not.toHaveProperty('notFoundThreadIds')
+    expect(delta.seen.some((request) => new URL(request).searchParams.get('q') === query)).toBe(
+      false,
+    )
+
+    const retry = { ...options, refresh: true, expectedAccountSub: 'account' }
+    const stillPending = pagedMailbox(query, mailbox, {
+      threads: { [sent.id]: partial },
+      profile: { historyId: '5001' },
+    })
+    expect(await searchMail(stillPending.api, retry)).toMatchObject({
+      unreadableThreadIds: [sent.id],
+    })
+    const readable = pagedMailbox(query, mailbox, { threads: { [sent.id]: sent } })
+    const recovered = await searchMail(readable.api, retry)
+    expect(recovered.threads).toEqual(first.threads)
+    expect(recovered).not.toHaveProperty('unreadableThreadIds')
+    expect(recovered).not.toHaveProperty('notFoundThreadIds')
+  })
+
+  it('leaves disjunctive search membership to Gmail even with an Inbox option', async () => {
+    const query = 'in:inbox OR in:sent'
+    const sent = rawThread('sent-only', 'Sent only', ['SENT'])
+    const provider = pagedMailbox(query, [sent], { history: 404 })
+    const options = { query, mailbox: 'inbox' }
+    for (let i = 0; i < 2; i++) {
+      const page = await searchMail(provider.api, options)
+      expect(page.threads.map(({ id }) => id)).toEqual([sent.id])
+      expect(page).not.toHaveProperty('historyRecoveryRequired')
+    }
   })
 
   it('applies arrivals and replies found on later history pages', async () => {
@@ -282,6 +664,7 @@ describe('syncThreads', () => {
       threads: {
         arrival: rawThread('arrival', 'New arrival'),
         cached: replied,
+        elsewhere: rawThread('elsewhere', 'Another sent message', ['SENT']),
       },
     })
 
@@ -351,23 +734,6 @@ describe('syncThreads', () => {
     expect(threadGets(second.seen)).toHaveLength(2)
     expect(page.threads.map((t) => t.subject)).toContain('One (updated)')
     expect(page.threads.map((t) => t.subject)).toContain('Two')
-  })
-
-  it('falls back to a full fetch when Google has expired the history id', async () => {
-    const first = gmail({ list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'One') } })
-    await syncThreads(first.api, cache, {})
-
-    const second = gmail({
-      history: 404,
-      list: [{ id: 't1' }, { id: 't2' }],
-      threads: { t1: rawThread('t1', 'One'), t2: rawThread('t2', 'Two') },
-    })
-
-    // Gmail keeps roughly a week of history. A 404 here means "resync", not
-    // "something went wrong" — it must never surface as a failure.
-    const page = await syncThreads(second.api, cache, {})
-
-    expect(page.threads.map((t) => t.subject)).toEqual(['One', 'Two'])
   })
 
   it('stores the new history id after a sync', async () => {
@@ -613,13 +979,17 @@ describe('syncThreads', () => {
     for (const [id, event] of [
       [
         'trashed-sent',
-        { labelsAdded: [{ message: { id: 'm1', threadId: 'trashed-sent' }, labelIds: ['TRASH'] }] },
+        {
+          labelsAdded: [
+            { message: { id: 'trashed-sent-m1', threadId: 'trashed-sent' }, labelIds: ['TRASH'] },
+          ],
+        },
       ],
       [
         'archived-sent',
         {
           labelsRemoved: [
-            { message: { id: 'm2', threadId: 'archived-sent' }, labelIds: ['INBOX'] },
+            { message: { id: 'archived-sent-m1', threadId: 'archived-sent' }, labelIds: ['INBOX'] },
           ],
         },
       ],
@@ -634,14 +1004,19 @@ describe('syncThreads', () => {
       const second = gmail({
         list: [],
         history: { historyId: '5006', history: [event] },
-        threads: { [id]: rawThread(id, 'Unrelated sent-only', ['SENT']) },
+        threads: {
+          [id]: rawThread(
+            id,
+            'Unrelated sent-only',
+            id === 'trashed-sent' ? ['SENT', 'TRASH'] : ['SENT'],
+          ),
+        },
       })
       const page = await syncThreads(second.api, cache, options)
 
       expect(page.threads.map((thread) => thread.id)).not.toContain(id)
-      expect(threadGets(second.seen)).not.toEqual(
-        expect.arrayContaining([expect.stringContaining(`/threads/${id}`)]),
-      )
+      expect(page).not.toHaveProperty('notFoundThreadIds')
+      expect(page).not.toHaveProperty('unreadableThreadIds')
     }
   })
 
@@ -670,7 +1045,7 @@ describe('syncThreads', () => {
       threads: {
         unrelated: rawThread('unrelated', 'Unrelated'),
         'older-arrival': rawThread('older-arrival', 'Older matching result'),
-        nonmatch: rawThread('nonmatch', 'Not in query'),
+        nonmatch: rawThread('nonmatch', 'Not in query', ['SENT']),
       },
     })
 
@@ -684,59 +1059,616 @@ describe('syncThreads', () => {
     expect(threadGets(second.seen)).toEqual(
       expect.arrayContaining([expect.stringContaining('/threads/older-arrival')]),
     )
-    expect(threadGets(second.seen)).toHaveLength(1)
+    expect(threadGets(second.seen).length).toBeLessThanOrEqual(2)
     expect(threadGets(second.seen).some((url) => url.includes('unrelated'))).toBe(false)
   })
 
-  it('does not admit an uncached message that the active mailbox list does not return', async () => {
-    const options = {}
-    const first = gmail({ list: [{ id: 'old' }], threads: { old: rawThread('old', 'Old') } })
-    await syncThreads(first.api, cache, options)
+  it.each([404, 200, 503])(
+    'reconciles a cached deletion candidate omitted by Gmail’s list (metadata %i)',
+    async (status) => {
+      const invitation = rawThread('invitation', 'Meeting', ['INBOX', 'UNREAD'])
+      const sentReply = message('sent-reply', 'invitation', [['Subject', 'Re: Meeting']], ['SENT'])
+      // In the 200 control, only the inbox message was deleted; its Sent reply survives.
+      if (status === 200) invitation.messages.push(sentReply)
+      const healthy = rawThread('healthy', 'Other mail', ['INBOX', 'UNREAD'])
+      const first = gmail({
+        list: [{ id: 'invitation' }, { id: 'healthy' }],
+        threads: { invitation, healthy },
+      })
+      const unread = { unread: true }
+      await searchMail(first.api, unread)
+      const initial = await searchMail(first.api)
+      expect(initial.threads.map(({ id }) => id)).toEqual(['invitation', 'healthy'])
 
-    const second = gmail({
-      list: [{ id: 'other-match' }],
-      history: {
-        historyId: '5005',
-        history: [{ messagesAdded: [{ message: { id: 'new-message', threadId: 'not-a-match' } }] }],
-      },
-      threads: {
-        'other-match': rawThread('other-match', 'Other matching result'),
-        'not-a-match': rawThread('not-a-match', 'Does not match'),
-      },
-    })
-    const page = await syncThreads(second.api, cache, options)
+      const delta = gmail({
+        list: [{ id: 'healthy' }],
+        history: {
+          historyId: '5005',
+          history: [
+            {
+              id: '5005',
+              messagesDeleted: [{ message: { id: 'invitation-m1', threadId: 'invitation' } }],
+              labelsRemoved: [
+                { message: { id: 'unrelated-m1', threadId: 'unrelated' }, labelIds: ['INBOX'] },
+              ],
+            },
+          ],
+        },
+        threads: {
+          healthy,
+          invitation: { id: 'invitation', messages: [sentReply] },
+          unrelated: rawThread('unrelated', 'Already archived', ['SENT']),
+        },
+        ...(status === 404 ? { missingThreads: ['invitation'] } : {}),
+        ...(status === 503 ? { failedThreads: ['invitation'] } : {}),
+      })
+      const page = await searchMail(delta.api)
+      expect(page.threads.map(({ id }) => id)).toEqual(['healthy'])
+      expect(page.notFoundThreadIds).toEqual(status === 404 ? ['invitation'] : undefined)
+      expect(page.unreadableThreadIds).toEqual(status === 503 ? ['invitation'] : undefined)
+      expect(cache.readThreads(cacheKey({}))?.map(({ id }) => id)).toEqual(
+        status === 503 ? ['healthy', 'invitation'] : ['healthy'],
+      )
+      expect(cache.readThreads(cacheKey(unread))?.map(({ id }) => id)).toEqual(
+        status === 404 ? ['healthy'] : ['invitation', 'healthy'],
+      )
+      expect(cache.historyId(cacheKey({}))).toBe(status === 503 ? null : '5005')
 
-    expect(page.threads.map((thread) => thread.id)).not.toContain('not-a-match')
-    expect(threadGets(second.seen)).not.toEqual(
-      expect.arrayContaining([expect.stringContaining('/threads/not-a-match')]),
+      if (status === 503) {
+        const retry = gmail({
+          listPages: {
+            '': { threads: [{ id: 'healthy' }], nextPageToken: 'next-page' },
+            'next-page': { threads: [{ id: 'older' }] },
+          },
+          threads: { healthy, older: rawThread('older', 'Older mail') },
+          missingThreads: ['invitation'],
+          profile: { historyId: '5006' },
+        })
+        const recovered = await searchMail(retry.api, { refresh: true })
+        expect(recovered).toMatchObject({
+          threads: [{ id: 'healthy' }],
+          nextPageToken: 'next-page',
+          notFoundThreadIds: ['invitation'],
+        })
+        expect(recovered).not.toHaveProperty('unreadableThreadIds')
+        expect(cache.readThreads(cacheKey(unread))?.map(({ id }) => id)).toEqual(['healthy'])
+        expect(cache.historyId(cacheKey({}))).toBe('5006')
+        expect(await searchMail(retry.api, { pageToken: recovered.nextPageToken })).toMatchObject({
+          threads: [{ id: 'older' }],
+          nextPageToken: null,
+        })
+      }
+
+      const unchanged = gmail({ history: { historyId: status === 503 ? '5006' : '5005' } })
+      const next = await searchMail(unchanged.api)
+      expect(next.threads.map(({ id }) => id)).toEqual(['healthy'])
+      expect(next).not.toHaveProperty('notFoundThreadIds')
+      expect(next).not.toHaveProperty('unreadableThreadIds')
+    },
+  )
+
+  it.each(['404', 'surviving reply', '503', 'timeout'])(
+    'checks a deletion from Load more without caching the continuation (%s)',
+    async (verdict) => {
+      const healthy = rawThread('healthy', 'Other mail')
+      const id = 'invitation'
+      const inviteMessage = message(
+        'invite-message',
+        id,
+        [
+          ['Subject', 'Meeting'],
+          ['Content-Type', 'text/calendar; method=REQUEST'],
+        ],
+        ['INBOX'],
+      )
+      const calendarPart = {
+        ...inviteMessage,
+        payload: { ...inviteMessage.payload, mimeType: 'text/calendar' },
+      }
+      const sent = message('sent-reply', id, [['Subject', 'Re: Meeting']], ['SENT'])
+      const sentReply = { ...sent, payload: { ...sent.payload, mimeType: 'text/plain' } }
+      const messages = verdict === 'surviving reply' ? [calendarPart, sentReply] : [calendarPart]
+      const metadata = { id, messages }
+      const initial = gmail(
+        {
+          listPages: {
+            '': { threads: [{ id: 'healthy' }], nextPageToken: 'next' },
+            next: { threads: [{ id: 'invitation' }] },
+          },
+          threads: { healthy, invitation: metadata },
+        },
+        {},
+        (url) => {
+          if (url.pathname.endsWith(`/threads/${id}`) && url.searchParams.get('format') === 'full')
+            return Promise.resolve(
+              Response.json({
+                id,
+                messages: messages.map((m) => ({
+                  ...m,
+                  payload: { ...m.payload, body: { size: 0 } },
+                })),
+              }),
+            )
+        },
+      )
+      const first = await searchMail(initial.api)
+      expect(first).toMatchObject({ threads: [{ id: 'healthy' }], nextPageToken: 'next' })
+      const continuation = await searchMail(initial.api, { pageToken: first.nextPageToken })
+      expect(continuation).toMatchObject({
+        threads: [{ id: 'invitation', hasInvite: true }],
+        nextPageToken: null,
+      })
+      const opened = await readThread(initial.api, continuation.threads[0]!.id)
+      expect(opened.id).toBe(id)
+      expect(opened.messages.find((item) => item.id === inviteMessage.id)?.hasCalendarPayload).toBe(
+        true,
+      )
+      // An unchanged first-page delta must not contain the continuation row.
+      expect((await searchMail(initial.api)).threads.map((row) => row.id)).toEqual(['healthy'])
+
+      const deadlines = verdict === 'timeout' ? captureDeadlines() : undefined
+      const delta = gmail(
+        {
+          list: [{ id: 'healthy' }],
+          threads: { healthy, invitation: { id, messages: [sentReply] } },
+          history: {
+            historyId: '5005',
+            history: [
+              {
+                id: '5005',
+                messagesDeleted: [{ message: { id: inviteMessage.id, threadId: id } }],
+              },
+            ],
+          },
+          missingThreads: verdict === '404' ? [id] : [],
+          failedThreads: verdict === '503' ? [id] : [],
+        },
+        {},
+        (url, signal) => {
+          if (
+            !deadlines ||
+            !url.pathname.endsWith(`/threads/${id}`) ||
+            url.searchParams.get('format') !== 'metadata'
+          )
+            return
+          const response = beforeHeaders(signal)
+          deadlines.expire(signal)
+          return response
+        },
+      )
+      const page = await searchMail(delta.api).finally(() => deadlines?.restore())
+      const failed = verdict === '503' || verdict === 'timeout'
+      expect(page.threads.map((row) => row.id)).toEqual(['healthy'])
+      expect(page.notFoundThreadIds).toEqual(verdict === '404' ? [id] : undefined)
+      expect(page.unreadableThreadIds).toEqual(failed ? [id] : undefined)
+
+      if (failed) {
+        // The failed resource is still off-page on Retry, and not in the new history window.
+        const retry = gmail({
+          list: [{ id: 'healthy' }],
+          threads: { healthy },
+          missingThreads: [id],
+          profile: { historyId: '5006' },
+        })
+        const recovered = await searchMail(retry.api, { refresh: true })
+        expect(recovered).toMatchObject({ threads: [{ id: 'healthy' }], notFoundThreadIds: [id] })
+        expect(recovered).not.toHaveProperty('unreadableThreadIds')
+      }
+
+      const unchanged = gmail({}, {}, (url) => {
+        if (!url.pathname.endsWith('/history')) return
+        const since = failed ? '5006' : '5005'
+        return Promise.resolve(
+          url.searchParams.get('startHistoryId') === since
+            ? Response.json({ historyId: since })
+            : Response.json({}, { status: 400 }),
+        )
+      })
+      const next = await searchMail(unchanged.api)
+      expect(next.threads.map((row) => row.id)).toEqual(['healthy'])
+      expect(next).not.toHaveProperty('notFoundThreadIds')
+      expect(next).not.toHaveProperty('unreadableThreadIds')
+    },
+  )
+
+  it.each(['threads', 'history pages', 'changes', 'membership', 'expired'] as const)(
+    'requests an explicit snapshot for %s and resumes deltas from its new baseline',
+    async (limit) => {
+      const healthy = rawThread('healthy', 'Kept')
+      await searchMail(gmail({ list: [{ id: 'healthy' }], threads: { healthy } }).api)
+      const deletion = {
+        messagesDeleted: Array.from({ length: limit === 'threads' ? 501 : 10_001 }, (_, i) => ({
+          message: { id: `message-${i}`, threadId: limit === 'threads' ? `thread-${i}` : 'older' },
+        })),
+      }
+      const profile = '7000'
+      let newMessage = false
+      let snapshot = false
+      let historyPages = 0
+      let membershipPages = 0
+      let checkUnchanged = false
+      const other = rawThread('other', 'Matching older thread')
+      const mailbox = [...largeInbox(), other]
+      const { api } = gmail(
+        {
+          listPages: { '': { threads: [{ id: 'healthy' }], nextPageToken: 'new-token' } },
+          threads: { healthy, other },
+        },
+        {},
+        (url) => {
+          if (url.pathname.endsWith('/profile')) {
+            snapshot = true
+            return Promise.resolve(Response.json({ historyId: newMessage ? '7001' : profile }))
+          }
+          if (url.pathname.endsWith('/threads/off-page-gone'))
+            return Promise.resolve(Response.json({}, { status: 404 }))
+          if (url.pathname.endsWith('/threads/off-page-failed'))
+            return Promise.resolve(Response.json({}, { status: snapshot ? 404 : 503 }))
+          if (url.pathname.endsWith('/history')) {
+            const since = url.searchParams.get('startHistoryId')
+            if (since === profile)
+              return Promise.resolve(
+                Response.json({
+                  historyId: '7001',
+                  history: [
+                    {
+                      labelsAdded: [
+                        {
+                          message: { id: 'healthy-m1', threadId: 'healthy' },
+                          labelIds: ['UNREAD'],
+                        },
+                      ],
+                    },
+                  ],
+                }),
+              )
+            if (since !== '5000') return Promise.resolve(Response.json({}, { status: 400 }))
+            if (checkUnchanged) return Promise.resolve(Response.json({ historyId: '5000' }))
+            if (limit === 'expired') return Promise.resolve(Response.json({}, { status: 404 }))
+            if (++historyPages > 21) throw new Error('History traversal did not stop')
+            return Promise.resolve(
+              Response.json({
+                historyId: '6999',
+                ...(limit === 'history pages' ? { nextPageToken: `history-${historyPages}` } : {}),
+                history:
+                  limit === 'membership'
+                    ? [
+                        {
+                          messagesAdded: [{ message: { id: 'other-m1', threadId: 'other' } }],
+                          messagesDeleted: ['off-page-gone', 'off-page-failed'].map((threadId) => ({
+                            message: { id: `${threadId}-m1`, threadId },
+                          })),
+                        },
+                      ]
+                    : limit === 'history pages'
+                      ? []
+                      : [deletion],
+              }),
+            )
+          }
+          if (
+            url.pathname.endsWith('/threads') &&
+            !url.searchParams.get('q')?.includes('filename:ics')
+          ) {
+            // A change during the replacement list must still be visible to the next delta.
+            if (snapshot) newMessage = true
+            else if (limit === 'membership') {
+              if (++membershipPages > 20) throw new Error('Membership traversal did not stop')
+              return Promise.resolve(mailboxPage(url, 'in:inbox', mailbox))
+            }
+          }
+        },
+      )
+      const mail = mailSearch(api)
+      try {
+        const blocked = await mail.search()
+        expect(blocked).toMatchObject({ historyRecoveryRequired: true })
+        if (limit === 'membership') {
+          expect(blocked.notFoundThreadIds).toEqual(['off-page-gone'])
+          expect(blocked.unreadableThreadIds).toEqual(['off-page-failed'])
+        }
+        checkUnchanged = true
+        expect(await mail.search()).toMatchObject({ threads: [{ id: 'healthy' }] })
+        const replacement = await mail.search({ refresh: true, expectedAccountSub: 'account' })
+        expect(replacement).toMatchObject({
+          threads: [{ id: 'healthy', unread: false }],
+          nextPageToken: 'new-token',
+        })
+        if (limit === 'membership') {
+          expect(replacement.notFoundThreadIds).toEqual(['off-page-failed'])
+          expect(replacement).not.toHaveProperty('unreadableThreadIds')
+        }
+        const delta = await mail.search()
+        expect(delta).toMatchObject({ threads: [{ id: 'healthy', unread: true }] })
+        expect(delta).not.toHaveProperty('notFoundThreadIds')
+      } finally {
+        mail.close()
+      }
+    },
+  )
+
+  it('coalesces an old delta and retains the continuation failure through a queued reset', async () => {
+    const healthy = rawThread('healthy', 'Healthy mail')
+    const seeded = await searchMail(
+      gmail({
+        listPages: { '': { threads: [{ id: 'healthy' }], nextPageToken: 'old-token' } },
+        threads: { healthy },
+      }).api,
     )
-  })
-
-  it('drops a thread history reports as deleted', async () => {
-    const first = gmail({
-      list: [{ id: 't1' }, { id: 't2' }],
-      threads: { t1: rawThread('t1', 'One'), t2: rawThread('t2', 'Two') },
-    })
-    await syncThreads(first.api, cache, {})
-
-    const second = gmail({
-      list: [{ id: 't2' }],
-      history: {
-        historyId: '5005',
-        history: [{ messagesDeleted: [{ message: { id: 't2-m1', threadId: 't2' } }] }],
+    const entered = deferred<void>()
+    const held = deferred<Response>()
+    let oldHistoryReads = 0
+    let readable = false
+    const { api } = gmail(
+      {
+        listPages: {
+          '': { threads: [{ id: 'healthy' }], nextPageToken: 'new-token' },
+          'old-token': { threads: [{ id: 'older' }] },
+        },
+        profile: { historyId: '8000' },
+        threads: { healthy },
       },
-      missingThreads: ['t2'],
-    })
-    const page = await syncThreads(second.api, cache, {})
-
-    expect(threadGets(second.seen)).toHaveLength(1)
-    expect(page.threads.map((t) => t.id)).toEqual(['t1'])
+      {},
+      (url) => {
+        if (
+          url.pathname.endsWith('/history') &&
+          url.searchParams.get('startHistoryId') === '5000'
+        ) {
+          oldHistoryReads++
+          entered.resolve()
+          return held.promise
+        }
+        if (url.pathname.endsWith('/history')) {
+          return Promise.resolve(
+            url.searchParams.get('startHistoryId') === '8000'
+              ? Response.json({ historyId: '8001' })
+              : Response.json({}, { status: 400 }),
+          )
+        }
+        if (url.pathname.endsWith('/threads/older'))
+          return Promise.resolve(Response.json({}, { status: readable ? 404 : 503 }))
+      },
+    )
+    const mail = mailSearch(api)
+    const delta = mail.search()
+    const same = mail.search()
+    try {
+      await Promise.race([entered.promise, delta, same])
+      const continuation = mail.search({ pageToken: seeded.nextPageToken })
+      const reset = mail.search({ refresh: true, expectedAccountSub: 'account' })
+      held.resolve(Response.json({ historyId: '5001' }))
+      expect(await delta).toEqual(await same)
+      expect(oldHistoryReads).toBe(1)
+      expect(await continuation).toMatchObject({ unreadableThreadIds: ['older'] })
+      const partial = await reset
+      expect(partial).toMatchObject({
+        threads: [{ id: 'healthy' }],
+        nextPageToken: 'new-token',
+        unreadableThreadIds: ['older'],
+      })
+      expect(partial).not.toHaveProperty('notFoundThreadIds')
+      expect(await mail.search()).toMatchObject({ historyRecoveryRequired: true })
+      readable = true
+      expect(await mail.search({ refresh: true })).toMatchObject({ notFoundThreadIds: ['older'] })
+      expect(await mail.search()).toMatchObject({ threads: [{ id: 'healthy' }] })
+    } finally {
+      held.resolve(Response.json({ historyId: '5001' }))
+      mail.close()
+    }
   })
 
-  it('does not advance the cursor when a deleted message confirmation fails', async () => {
+  it('does not publish old evidence or advance the baseline after an unlink', async () => {
+    const original = rawThread('older', 'Same account thread')
+    await searchMail(gmail({ list: [{ id: 'older' }], threads: { older: original } }).api)
+    const entered = deferred<void>()
+    const held = deferred<Response>()
+    const { api } = gmail(
+      {
+        profile: { historyId: '9000' },
+        history: {
+          historyId: '5001',
+          history: [{ messagesDeleted: [{ message: { id: 'gone', threadId: 'older' } }] }],
+        },
+      },
+      {},
+      (url) => {
+        if (url.pathname.endsWith('/threads/older')) {
+          entered.resolve()
+          return held.promise
+        }
+      },
+    )
+    const old = mailSearch(api)
+    const delta = old.search()
+    let reset: Promise<MailPage> | undefined
+    try {
+      await Promise.race([entered.promise, delta])
+      reset = old.search({ refresh: true, expectedAccountSub: 'account' })
+      old.unlink()
+      held.resolve(Response.json({}, { status: 404 }))
+      await Promise.all([
+        expect(delta).rejects.toMatchObject({ code: 'FORBIDDEN' }),
+        expect(reset).rejects.toMatchObject({ code: 'FORBIDDEN' }),
+      ])
+      const newLink = gmail({}, {}, (url) => {
+        if (url.pathname.endsWith('/history'))
+          return Promise.resolve(
+            url.searchParams.get('startHistoryId') === '5000'
+              ? Response.json({ historyId: '5000' })
+              : Response.json({}, { status: 400 }),
+          )
+      })
+      expect(await searchMail(newLink.api)).toMatchObject({
+        threads: [{ id: 'older', subject: 'Same account thread' }],
+      })
+    } finally {
+      held.resolve(Response.json({}, { status: 404 }))
+      await Promise.allSettled([delta, reset])
+      old.close()
+    }
+  })
+
+  it.each(['cli', 'app'] as const)(
+    'keeps an independent %s page from rebasing an expired UI list',
+    async (door) => {
+      await searchMail(gmail({}).api)
+      const { api } = gmail({
+        history: 404,
+        list: [{ id: 'new' }],
+        threads: { new: rawThread('new', 'Independent page') },
+        profile: { historyId: '9000' },
+      })
+      const mail = mailSearch(api)
+      try {
+        expect(await mail.search({ refresh: true }, door)).toMatchObject({
+          threads: [{ id: 'new' }],
+        })
+        expect(await mail.search()).toMatchObject({ historyRecoveryRequired: true })
+      } finally {
+        mail.close()
+      }
+    },
+  )
+
+  it('does not deliver a late off-page 404 from a retired account to its replacement', async () => {
+    let entered!: (event: 'probe') => void
+    let release!: (response: Response) => void
+    const started = new Promise<'probe'>((resolve) => (entered = resolve))
+    const response = new Promise<Response>((resolve) => (release = resolve))
+    const oldApi = gmail(
+      {
+        history: {
+          historyId: '5005',
+          history: [
+            { id: '5005', messagesDeleted: [{ message: { id: 'm1', threadId: 'shared' } }] },
+          ],
+        },
+      },
+      {},
+      (url) => {
+        if (url.pathname.endsWith('/threads/shared')) {
+          entered('probe')
+          return response
+        }
+      },
+    ).api
+    await searchMail(gmail({}).api)
+    const old = createGoogleData({ api: () => oldApi, cache })
+
+    const replacementCache = openGoogleCache(join(dir, 'replacement.db'))
+    const replacementApi = gmail({
+      list: [{ id: 'shared' }],
+      threads: { shared: rawThread('shared', 'Mail in the replacement account') },
+    }).api
+    const replacement = createGoogleData({ api: () => replacementApi, cache: replacementCache })
+    const pending = old.threads({})
+    let queued: Promise<MailPage> | undefined
+    try {
+      expect(await Promise.race([started, pending])).toBe('probe')
+      queued = old.threads({}, { refresh: true })
+      old.forget()
+      expect((await replacement.threads({})).threads.map(({ id }) => id)).toEqual(['shared'])
+      release(Response.json({ error: { status: 'NOT_FOUND' } }, { status: 404 }))
+      await Promise.all([expect(pending).rejects.toThrow(), expect(queued).rejects.toThrow()])
+      const current = await replacement.threads({})
+      expect(current.threads.map(({ subject }) => subject)).toEqual([
+        'Mail in the replacement account',
+      ])
+      expect(current).not.toHaveProperty('notFoundThreadIds')
+    } finally {
+      release(Response.json({}, { status: 404 }))
+      await Promise.allSettled([pending, queued])
+      replacementCache.close()
+    }
+  })
+
+  it('evicts a changed thread after a metadata 404, including from another cached list', async () => {
+    const list = [{ id: 'deleted' }, { id: 'healthy' }]
+    const first = gmail({
+      list,
+      threads: {
+        deleted: rawThread('deleted', 'Removed', ['INBOX', 'UNREAD']),
+        healthy: rawThread('healthy', 'Still here', ['INBOX', 'UNREAD']),
+      },
+    })
+    const unread = { unread: true }
+    expect((await syncThreads(first.api, cache, unread)).threads.map(({ id }) => id)).toEqual([
+      'deleted',
+      'healthy',
+    ])
+    await syncThreads(first.api, cache)
+
+    // The thread vanished after the history snapshot; there is no explicit
+    // deletion in this delta, only a refetch of a changed conversation.
+    const delta = gmail({
+      history: {
+        historyId: '6000',
+        history: [{ messagesAdded: [{ message: { id: 'incoming', threadId: 'deleted' } }] }],
+      },
+      missingThreads: ['deleted'],
+    })
+    const updated = await syncThreads(delta.api, cache)
+    expect(updated.threads.map(({ id }) => id)).toEqual(['healthy'])
+    expect(updated.notFoundThreadIds).toEqual(['deleted'])
+    expect(updated.nextPageToken).toBeNull()
+    expect(updated).not.toHaveProperty('unreadableThreadIds')
+
+    const unchanged = gmail({ history: { historyId: '6000' } })
+    for (const options of [{}, unread]) {
+      const page = await syncThreads(unchanged.api, cache, options)
+      expect(page.threads.map(({ id }) => id)).toEqual(['healthy'])
+      expect(page).not.toHaveProperty('notFoundThreadIds')
+    }
+    expect(unchanged.seen[0]).toContain('startHistoryId=6000')
+  })
+
+  it.each([404, 503])(
+    'reports an overlapping continuation metadata %i without losing the page',
+    async (status) => {
+      const initialIds = [{ id: 'overlap' }, { id: 'retained' }]
+      const first = gmail({
+        listPages: { '': { threads: initialIds, nextPageToken: 'page-2' } },
+        threads: {
+          overlap: rawThread('overlap', 'Previously visible', ['INBOX', 'UNREAD']),
+          retained: rawThread('retained', 'Still visible', ['INBOX', 'UNREAD']),
+        },
+      })
+      const unread = { unread: true }
+      const inbox = await syncThreads(first.api, cache)
+      for (const page of [inbox, await syncThreads(first.api, cache, unread)]) {
+        expect(page.threads.map(({ id }) => id)).toEqual(['overlap', 'retained'])
+      }
+      const next = gmail({
+        listPages: {
+          'page-2': { threads: [{ id: 'overlap' }, { id: 'new' }], nextPageToken: 'page-3' },
+        },
+        threads: { new: rawThread('new', 'Next page row') },
+        ...(status === 404 ? { missingThreads: ['overlap'] } : { failedThreads: ['overlap'] }),
+      })
+      const page = await syncThreads(next.api, cache, { pageToken: inbox.nextPageToken! })
+
+      expect(page.threads.map(({ id }) => id)).toEqual(['new'])
+      expect(page.nextPageToken).toBe('page-3')
+      expect(page.notFoundThreadIds).toEqual(status === 404 ? ['overlap'] : undefined)
+      expect(page.unreadableThreadIds).toEqual(status === 503 ? ['overlap'] : undefined)
+
+      // No history change has announced the disappearance. A definitive metadata
+      // 404 must still evict the summary from every cached list for this account.
+      const unchanged = gmail({ history: { historyId: '6000' } })
+      if (status === 404) {
+        expect((await syncThreads(unchanged.api, cache)).threads.map(({ id }) => id)).toEqual([
+          'retained',
+        ])
+      }
+      expect((await syncThreads(unchanged.api, cache, unread)).threads.map(({ id }) => id)).toEqual(
+        status === 404 ? ['retained'] : ['overlap', 'retained'],
+      )
+    },
+  )
+
+  it('reports a failed deleted-message confirmation as pending until a fresh read', async () => {
     const first = gmail({ list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'Draft') } })
     await syncThreads(first.api, cache, {})
-    const cursor = cache.historyId(cacheKey({}))
 
     const second = gmail({
       list: [{ id: 't1' }],
@@ -747,8 +1679,173 @@ describe('syncThreads', () => {
       failedThreads: ['t1'],
     })
 
-    await expect(syncThreads(second.api, cache, {})).rejects.toThrow()
-    expect(cache.historyId(cacheKey({}))).toBe(cursor)
+    const partial = await syncThreads(second.api, cache)
+    expect(partial).toMatchObject({ threads: [], unreadableThreadIds: ['t1'] })
+    expect(partial).not.toHaveProperty('notFoundThreadIds')
+    expect(cache.readThreads(cacheKey({}))?.map(({ id }) => id)).toEqual(['t1'])
+    const fresh = gmail({
+      list: [{ id: 't1' }],
+      threads: { t1: rawThread('t1', 'Remaining message') },
+      profile: { historyId: '6001' },
+    })
+    const recovered = await syncThreads(fresh.api, cache, {}, undefined, { refresh: true })
+    expect(recovered.threads.map(({ subject }) => subject)).toEqual(['Remaining message'])
+    expect(recovered).not.toHaveProperty('unreadableThreadIds')
+  })
+
+  it.each(['headers', 'body'] as const)(
+    'isolates a metadata endpoint timeout at %s and restores the row on read-only retry',
+    async (stage) => {
+      const deadlines = captureDeadlines()
+      try {
+        let stalled = false
+        const { api } = gmail(
+          {
+            listPages: {
+              '': { threads: [{ id: 'slow' }, { id: 'healthy' }], nextPageToken: 'page-2' },
+            },
+            threads: { slow: rawThread('slow', 'Slow'), healthy: rawThread('healthy', 'Healthy') },
+          },
+          {},
+          (url, signal) => {
+            if (!stalled || !url.pathname.endsWith('/threads/slow')) return
+            if (stage === 'headers') {
+              const response = beforeHeaders(signal)
+              deadlines.expire(signal)
+              return response
+            }
+            const body = new ReadableStream(
+              {
+                start(stream) {
+                  signal.addEventListener(
+                    'abort',
+                    () => stream.error(new DOMException('Body read aborted', 'AbortError')),
+                    { once: true },
+                  )
+                },
+                pull() {
+                  deadlines.expire(signal)
+                },
+              },
+              { highWaterMark: 0 },
+            )
+            return Promise.resolve(new Response(body, { status: 200 }))
+          },
+        )
+        expect((await syncThreads(api, cache)).threads.map(({ id }) => id)).toEqual([
+          'slow',
+          'healthy',
+        ])
+        stalled = true
+        const partial = await syncThreads(api, cache, {}, undefined, { refresh: true })
+        expect(partial.threads.map(({ id }) => id)).toEqual(['healthy'])
+        expect(partial.nextPageToken).toBe('page-2')
+        expect(partial.unreadableThreadIds).toEqual(['slow'])
+        expect(partial).not.toHaveProperty('notFoundThreadIds')
+        expect(cache.readThreads(cacheKey({}))?.map(({ id }) => id)).toContain('slow')
+
+        stalled = false
+        const recovered = await syncThreads(api, cache, {}, undefined, { refresh: true })
+        expect(recovered.threads.map(({ id }) => id)).toEqual(['slow', 'healthy'])
+        expect(recovered.nextPageToken).toBe('page-2')
+        expect(recovered).not.toHaveProperty('unreadableThreadIds')
+        expect(recovered).not.toHaveProperty('notFoundThreadIds')
+      } finally {
+        deadlines.restore()
+      }
+    },
+  )
+
+  it('rejects the page when OAuth token acquisition times out after the list request', async () => {
+    let listed = false
+    const { api } = gmail(
+      { list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'One') } },
+      {
+        accessToken: async () => {
+          if (listed) throw new DOMException('OAuth refresh timed out', 'TimeoutError')
+          return 'at'
+        },
+      },
+      (url) => {
+        if (url.pathname.endsWith('/threads')) listed = true
+        return undefined
+      },
+    )
+    await expect(syncThreads(api, cache)).rejects.toMatchObject({ code: 'reconnect' })
+  })
+
+  it('rejects the page when the caller aborts a metadata fetch', async () => {
+    const caller = new AbortController()
+    const cancelled = new DOMException('The caller ended the read', 'AbortError')
+    const { api } = gmail(
+      {
+        list: [{ id: 'aborted' }, { id: 'healthy' }],
+        threads: { healthy: rawThread('healthy', 'Healthy') },
+      },
+      {},
+      (url, deadline) => {
+        if (!url.pathname.endsWith('/threads/aborted')) return
+        const response = beforeHeaders(AbortSignal.any([caller.signal, deadline]))
+        caller.abort(cancelled)
+        return response
+      },
+    )
+    await expect(syncThreads(api, cache)).rejects.toBe(cancelled)
+  })
+
+  it.each(['binding', 'shared scan'] as const)(
+    'keeps %s failures global when a resource deadline expires',
+    async (failure) => {
+      const deadlines = captureDeadlines()
+      try {
+        const stopped = new Error('The account binding changed')
+        let active = true
+        const { api } = gmail(
+          { list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'One') } },
+          {
+            assertRequest: () => {
+              if (!active) throw stopped
+            },
+          },
+          (url, signal) => {
+            const applies =
+              failure === 'binding'
+                ? url.pathname.endsWith('/threads/t1')
+                : url.searchParams.get('q')?.includes('filename:ics')
+            if (!applies) return
+            const response = beforeHeaders(signal)
+            if (failure === 'binding') active = false
+            deadlines.expire(signal)
+            return response
+          },
+        )
+        const page = syncThreads(api, cache)
+        if (failure === 'binding') await expect(page).rejects.toBe(stopped)
+        else await expect(page).rejects.toMatchObject({ cause: { name: 'TimeoutError' } })
+      } finally {
+        deadlines.restore()
+      }
+    },
+  )
+
+  it.each([
+    [401, 'reconnect', 'authError'],
+    [403, 'scope', 'insufficientPermissions'],
+    [403, 'rate-limit', 'userRateLimitExceeded'],
+    [429, 'rate-limit', 'rateLimitExceeded'],
+  ])('rejects the whole page for a metadata HTTP %i (%s)', async (status, code, reason) => {
+    const { api } = gmail(
+      {
+        list: [{ id: 'refused' }, { id: 'healthy' }],
+        threads: { healthy: rawThread('healthy', 'Healthy') },
+      },
+      {},
+      (url) => {
+        if (!url.pathname.endsWith('/threads/refused')) return
+        return Promise.resolve(Response.json({ error: { errors: [{ reason }] } }, { status }))
+      },
+    )
+    await expect(syncThreads(api, cache)).rejects.toMatchObject({ status, code })
   })
 
   it('refreshes an explicit query instead of using mailbox history', async () => {
@@ -894,7 +1991,7 @@ describe('syncThreads', () => {
     it('keeps an inbox thread when a SENT-only reply is trashed', async () => {
       await cachedInbox()
       const thread = rawThread('t2', 'Two')
-      thread.messages.push(message('t2-reply', 't2', [], ['SENT']))
+      thread.messages.push(message('t2-reply', 't2', [], ['SENT', 'TRASH']))
 
       const second = gmail({
         list: [{ id: 't2' }],
@@ -1145,8 +2242,6 @@ describe('syncThreads', () => {
     })
 
     it('drops a sent thread that was trashed', async () => {
-      // The departure that IS real for Sent, and the one `LEFT_WHEN_ADDED`
-      // already covered.
       const first = gmail({
         list: [{ id: 't9' }],
         threads: { t9: rawThread('t9', 'Something sent', ['SENT']) },
@@ -1154,6 +2249,7 @@ describe('syncThreads', () => {
       await syncThreads(first.api, cache, { mailbox: 'sent' })
 
       const second = gmail({
+        threads: { t9: rawThread('t9', 'Something sent', ['SENT', 'TRASH']) },
         history: {
           historyId: '5002',
           history: [

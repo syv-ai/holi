@@ -86,6 +86,14 @@ function rig({
   const registry = createCapabilityRegistry()
   const capabilities = googleCapabilities({
     accounts: {
+      bindingFor: async (remote: string) =>
+        googleData === null
+          ? null
+          : {
+              session: { accountSub: 'sub-1', getAccessToken: async () => 'token' },
+              revision: remote,
+              isCurrent: () => true,
+            },
       sessionFor: async () =>
         googleData === null ? null : { accountSub: 'sub-1', getAccessToken: async () => 'token' },
       ...accounts,
@@ -123,6 +131,73 @@ function rig({
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
+it.each([200, 404])(
+  'does not disclose a bound thread HTTP %i after the vault link changes',
+  async (status) => {
+    let revision = 0
+    const session = { accountSub: 'sub-1', getAccessToken: async () => 'token' }
+    const { call, dispose } = rig({
+      accounts: {
+        bindingFor: (async (remote) => {
+          if (remote !== 'owner/repo') return null
+          const at = revision
+          return { session, revision: `link-${at}`, isCurrent: () => revision === at }
+        }) as GoogleAccountsManager['bindingFor'],
+      },
+    })
+    const requests = deferred<URL>()
+    const held = deferred<Response>()
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (new Headers(init?.headers).get('Authorization') !== 'Bearer token')
+        throw new Error('Expected the bound session token')
+      requests.resolve(new URL(String(input)))
+      return held.promise
+    })
+    const params = { id: 'invitation', expectedAccountSub: 'sub-1' }
+    const pending = call('thread', params)
+    try {
+      const url = await Promise.race([requests.promise, pending])
+      expect(url).toMatchObject({
+        pathname: '/gmail/v1/users/me/threads/invitation',
+        search: '?format=full',
+      })
+      revision++ // Unlink/relink to the same account retires the old vault link, not the session.
+      held.resolve(
+        status === 404
+          ? Response.json({ error: { status: 'NOT_FOUND' } }, { status })
+          : Response.json({
+              id: 'invitation',
+              messages: [
+                {
+                  id: 'message',
+                  threadId: 'invitation',
+                  payload: { mimeType: 'text/plain', headers: [], body: { size: 0 } },
+                },
+              ],
+            }),
+      )
+      await expect(pending).rejects.toMatchObject({ code: 'FORBIDDEN' })
+      fetch.mockResolvedValue(Response.json({}, { status: 404 }))
+      await expect(call('thread', params)).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    } finally {
+      held.resolve(Response.json({}, { status: 404 }))
+      await pending.catch(() => {})
+      fetch.mockRestore()
+      dispose()
+    }
+  },
+)
+
 it('lists --full in the generated usage for google read', () => {
   const read = googleCapabilities({
     accounts: {} as GoogleAccountsManager,
@@ -139,6 +214,135 @@ it('lists --full in the generated usage for google read', () => {
   )
   if (usage.kind !== 'help') throw new Error('expected generated CLI help')
   expect(usage.text).toContain('[--full]')
+})
+
+it('rejects malformed or wrong full Gmail threads and can reread the requested thread', async () => {
+  const message = {
+    id: 'm-1',
+    threadId: 'selected',
+    payload: {
+      mimeType: 'text/plain',
+      body: { data: Buffer.from('The selected message').toString('base64url') },
+    },
+  }
+  const emptyText = {
+    id: 'm-2',
+    threadId: 'selected',
+    internalDate: '1000',
+    payload: { mimeType: 'text/plain', body: { size: 0 } },
+  }
+  const valid = { id: 'selected', messages: [message, emptyText] }
+  const wrongMessage = { ...message, threadId: 'other' }
+  const invalidReplies = [
+    {},
+    { ...valid, id: 'other', messages: [wrongMessage] },
+    { ...valid, messages: [wrongMessage] },
+    { ...valid, messages: [{ ...message, threadId: undefined }] },
+    { ...valid, messages: [message, message] },
+    { ...valid, messages: [{ ...message, payload: {} }] },
+    ...['0x100', '1e3', ' 1000 ', '1000\n', 'Infinity', '9223372036854775808'].map(
+      (internalDate) => ({ ...valid, messages: [{ ...message, internalDate }] }),
+    ),
+  ]
+  const replies = [...invalidReplies, valid]
+  const fetchThread: typeof fetch = async (input) => {
+    const url = new URL(String(input))
+    if (!url.pathname.endsWith('/threads/selected') || url.searchParams.get('format') !== 'full')
+      throw new Error(`Unexpected Google request: ${url}`)
+    return Response.json(replies.shift())
+  }
+  vi.stubGlobal('fetch', fetchThread)
+  try {
+    const { call } = rig()
+    for (const _ of invalidReplies) {
+      await expect(call('thread', { id: 'selected' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      })
+    }
+    expect(await call('thread', { id: 'selected' })).toMatchObject({
+      id: 'selected',
+      messages: [
+        { id: 'm-1', body: 'The selected message' },
+        { id: 'm-2', body: '', hasCalendarPayload: false },
+      ],
+    })
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+it('projects calendar MIME evidence in the reader thread without fetching calendar bytes', async () => {
+  const ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Example//Calendar//EN',
+    'METHOD:REQUEST',
+    'BEGIN:VEVENT',
+    'UID:review@example.com',
+    'DTSTAMP:20260804T090000Z',
+    'DTSTART:20260819T120000Z',
+    'DTEND:20260819T130000Z',
+    'ORGANIZER:mailto:jane@example.com',
+    'ATTENDEE:mailto:ada@example.com',
+    'SUMMARY:Sprint review',
+    'END:VEVENT',
+    'END:VCALENDAR',
+    '',
+  ].join('\r\n')
+  const plain = {
+    mimeType: 'text/plain',
+    body: { data: Buffer.from('Sprint review').toString('base64url') },
+  }
+  const inline = {
+    mimeType: 'text/calendar',
+    body: { data: Buffer.from(ics).toString('base64url') },
+  }
+  const fetchThread = vi.fn(async (input: string) => {
+    const url = new URL(input)
+    if (
+      !url.pathname.endsWith('/threads/t-calendar') ||
+      url.searchParams.get('format') !== 'full'
+    ) {
+      throw new Error(`Unexpected Google request: ${url}`)
+    }
+    return Response.json({
+      id: 't-calendar',
+      messages: [
+        { id: 'ordinary', threadId: 't-calendar', payload: plain },
+        {
+          id: 'inline',
+          threadId: 't-calendar',
+          payload: {
+            mimeType: 'multipart/mixed',
+            parts: [{ mimeType: 'multipart/alternative', parts: [plain, inline] }],
+          },
+        },
+        {
+          id: 'attachment-backed',
+          threadId: 't-calendar',
+          payload: {
+            mimeType: 'application/ics',
+            body: { attachmentId: 'a-calendar', size: ics.length },
+          },
+        },
+      ],
+    })
+  })
+  vi.stubGlobal('fetch', fetchThread)
+  try {
+    const { call } = rig()
+    expect(await call('thread', { id: 't-calendar' })).toMatchObject({
+      id: 't-calendar',
+      messages: [
+        { id: 'ordinary', hasCalendarPayload: false },
+        { id: 'inline', hasCalendarPayload: true, attachments: [] },
+        { id: 'attachment-backed', hasCalendarPayload: true },
+      ],
+    })
+    expect(fetchThread).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })
 
 it('preserves explicit description clearing through the reschedule capability', async () => {
@@ -1080,6 +1284,7 @@ describe('what other people wrote, at the CLI door', () => {
           messages: [
             {
               id: 'm-plain',
+              threadId: 't-read',
               internalDate: '1000',
               payload: {
                 headers: [
@@ -1092,6 +1297,7 @@ describe('what other people wrote, at the CLI door', () => {
             },
             {
               id: 'm-html',
+              threadId: 't-read',
               internalDate: '2000',
               payload: {
                 headers: [{ name: 'From', value: 'Claire <claire@example.fr>' }],
@@ -1101,6 +1307,7 @@ describe('what other people wrote, at the CLI door', () => {
             },
             {
               id: 'm-html-bottom',
+              threadId: 't-read',
               internalDate: '3000',
               payload: {
                 headers: [{ name: 'From', value: 'Ada <ada@example.com>' }],

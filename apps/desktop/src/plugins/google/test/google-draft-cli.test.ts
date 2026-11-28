@@ -47,21 +47,36 @@ function rig() {
       const url = String(input)
       const body = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
       calls.push({ remote, url, method, ...(body === undefined ? {} : { body }) })
+      const threadId = decodeURIComponent(new URL(url).pathname.split('/').at(-1) ?? '')
       const response = url.includes('/threads/')
         ? {
+            id: threadId,
             messages: [
               {
                 id: 'old',
-                payload: { headers: [{ name: 'Message-ID', value: '<old@example.test>' }] },
+                threadId,
+                payload: {
+                  mimeType: 'text/plain',
+                  body: { size: 0 },
+                  headers: [{ name: 'Message-ID', value: '<old@example.test>' }],
+                },
               },
               {
                 id: 'draft',
+                threadId,
                 labelIds: ['DRAFT'],
-                payload: { headers: [{ name: 'Message-ID', value: '<draft@example.test>' }] },
+                payload: {
+                  mimeType: 'text/plain',
+                  body: { size: 0 },
+                  headers: [{ name: 'Message-ID', value: '<draft@example.test>' }],
+                },
               },
               {
                 id: 'latest',
+                threadId,
                 payload: {
+                  mimeType: 'text/plain',
+                  body: { size: 0 },
                   headers: [
                     { name: 'Message-ID', value: ' (latest) <"id with space"@-example> (tail)' },
                     {

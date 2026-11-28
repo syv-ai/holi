@@ -70,8 +70,10 @@ import {
   type MailCategory,
   type MailPage,
 } from './gmail'
+import { CalendarScanError } from './gmail-mime'
 import { CLIENT_ID_SUFFIX } from './credentials'
-import { resolveThreadMeeting } from './invite'
+import type { createMailInvitationSession } from './mail-invitation-session'
+import type { MailInvitationIdentity } from './mail-invitation'
 import type { LoopbackFlow } from './loopback-flow'
 import type { OutgoingMail } from './mime'
 import { assertCalendarAccess, fenceAnswer, planApiCall } from './passthrough'
@@ -95,6 +97,7 @@ export const GOOGLE_NAMESPACES = ['google'] as const
 export interface GoogleCapabilityDeps {
   accounts: GoogleAccountsManager
   meetings?: MeetingCreation
+  mailInvitations?: ReturnType<typeof createMailInvitationSession>
   /** The vault's cached data layer; null when no account is connected to it. */
   dataFor(remote: string): Promise<GoogleData | null>
   /** Cached data permanently bound to this resolved account session. */
@@ -141,6 +144,7 @@ async function google<T>(work: () => Promise<T>): Promise<T> {
     if (error instanceof GoogleReconnectRequiredError) {
       throw new CapabilityError('UNAUTHORIZED', error.message, RECONNECT)
     }
+    if (error instanceof CalendarScanError) throw new CapabilityError('FORBIDDEN', error.message)
     if (!(error instanceof GoogleApiError) || error.code === 'unknown') throw error
     const codes: Record<Exclude<GoogleErrorCode, 'unknown'>, CapabilityError['code']> = {
       reconnect: 'UNAUTHORIZED',
@@ -200,6 +204,8 @@ const MAIL_CATEGORIES: readonly MailCategory[] = [
 function searchParams(raw: unknown): {
   query?: string
   pageToken?: string
+  refresh?: boolean
+  expectedAccountSub?: string
   category?: MailCategory
   unread?: boolean
   mailbox?: MailboxName
@@ -213,9 +219,12 @@ function searchParams(raw: unknown): {
     optionalStringParam(p, 'mailbox') === 'sent' ? 'sent' : undefined
   const query = optionalStringParam(p, 'query')
   const pageToken = optionalStringParam(p, 'pageToken')
+  const expectedAccountSub = optionalStringParam(p, 'expectedAccountSub')
   return {
     ...(query === undefined ? {} : { query }),
     ...(pageToken === undefined ? {} : { pageToken }),
+    ...(p.refresh === true ? { refresh: true } : {}),
+    ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
     ...(category === undefined ? {} : { category }),
     ...(flagParam(p, 'unread') ? { unread: true } : {}),
     ...(mailbox === undefined ? {} : { mailbox }),
@@ -255,6 +264,80 @@ function expectedAccountParam(p: Record<string, unknown>): string | undefined {
     throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub must be a Google account id')
   }
   return sub
+}
+
+function invitationAccountParam(p: Record<string, unknown>): string {
+  const expectedAccountSub = expectedAccountParam(p)
+  if (expectedAccountSub === undefined) {
+    throw new CapabilityError('BAD_REQUEST', 'expectedAccountSub is required')
+  }
+  return expectedAccountSub
+}
+
+function invitationBindingParams(raw: unknown) {
+  const p = paramsObject(raw)
+  return {
+    expectedAccountSub: invitationAccountParam(p),
+    expectedBindingRevision: stringParam(p, 'expectedBindingRevision'),
+  }
+}
+
+function invitationParams(raw: unknown): { threadId: string; expectedAccountSub: string } {
+  const p = paramsObject(raw)
+  const threadId = stringParam(p, 'threadId')
+  try {
+    validateThreadId(threadId)
+  } catch {
+    throw new CapabilityError('BAD_REQUEST', 'threadId must be a Gmail thread id')
+  }
+  const expectedAccountSub = invitationAccountParam(p)
+  return { threadId, expectedAccountSub }
+}
+
+function invitationResponseParams(raw: unknown): ReturnType<typeof invitationParams> & {
+  identity: MailInvitationIdentity
+  expectedBindingRevision: string
+  expectedResponseTargetKey: string | null
+  answer: InviteAnswer
+} {
+  const p = paramsObject(raw)
+  const { sequence, recurrenceId, dtstamp, materialKey, ...target } = paramsObject(p.identity)
+  if (
+    typeof sequence !== 'number' ||
+    !Number.isSafeInteger(sequence) ||
+    sequence < 0 ||
+    (recurrenceId !== null && (typeof recurrenceId !== 'string' || !recurrenceId)) ||
+    (dtstamp !== null && (typeof dtstamp !== 'string' || !dtstamp)) ||
+    (materialKey !== null && (typeof materialKey !== 'string' || !materialKey))
+  ) {
+    throw new CapabilityError('BAD_REQUEST', 'Invalid invitation identity')
+  }
+  const answer = p.answer
+  if (answer !== 'accepted' && answer !== 'tentative' && answer !== 'declined') {
+    throw new CapabilityError('BAD_REQUEST', 'Invalid invitation response')
+  }
+  const expectedResponseTargetKey = p.expectedResponseTargetKey
+  if (
+    expectedResponseTargetKey !== null &&
+    (typeof expectedResponseTargetKey !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(expectedResponseTargetKey))
+  ) {
+    throw new CapabilityError('BAD_REQUEST', 'Invalid invitation response target')
+  }
+  return {
+    ...invitationParams(raw),
+    expectedBindingRevision: stringParam(p, 'expectedBindingRevision'),
+    expectedResponseTargetKey,
+    answer,
+    identity: {
+      messageId: stringParam(target, 'messageId'),
+      uid: stringParam(target, 'uid'),
+      sequence,
+      recurrenceId,
+      dtstamp,
+      materialKey,
+    },
+  }
 }
 
 function composeParams(raw: unknown): ComposeWrite & { expectedAccountSub?: string } {
@@ -454,7 +537,6 @@ function accountsText(value: GoogleAccountsOverview): string {
 }
 
 const capabilityDisposers = new WeakMap<object, () => void>()
-
 export function disposeGoogleCapabilities(capabilities: object): void {
   capabilityDisposers.get(capabilities)?.()
 }
@@ -481,12 +563,86 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     return { session, data }
   }
 
-  const validateSession = (remote: string, session: GoogleSession) => async () => {
-    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
-    const current = await deps.accounts.sessionFor(remote)
-    if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
-    if (current !== session)
-      throw new CapabilityError('FORBIDDEN', 'Google account changed; reload the composer')
+  const validateSession =
+    (remote: string, session: GoogleSession, view = 'the composer') =>
+    async () => {
+      if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+      const current = await deps.accounts.sessionFor(remote)
+      if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+      if (current !== session)
+        throw new CapabilityError('FORBIDDEN', `Google account changed; reload ${view}`)
+    }
+
+  const invitationBinding = async (
+    remote: string,
+    expectedAccountSub: string,
+    expectedBindingRevision?: string,
+  ) => {
+    const binding = await deps.accounts.bindingFor(remote)
+    const session = binding?.session
+    const changed = () =>
+      new CapabilityError('FORBIDDEN', 'Google account changed; reload the invitation')
+    if (
+      !binding ||
+      !session ||
+      session.accountSub !== expectedAccountSub ||
+      (expectedBindingRevision !== undefined && expectedBindingRevision !== binding.revision)
+    ) {
+      throw changed()
+    }
+    const assertBinding = () => {
+      if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+      if (!binding.isCurrent()) throw changed()
+    }
+    return { binding, session, assertBinding }
+  }
+
+  const invitationTarget = async (
+    { remote, root }: { remote: string; root: string },
+    {
+      expectedAccountSub,
+      threadId,
+      expectedBindingRevision,
+    }: ReturnType<typeof invitationParams> & {
+      expectedBindingRevision?: string
+    },
+  ) => {
+    const { binding, session, assertBinding } = await invitationBinding(
+      remote,
+      expectedAccountSub,
+      expectedBindingRevision,
+    )
+    assertBinding()
+    const email = session.account?.email.toLowerCase()
+    if (!email) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
+    return {
+      api: new GoogleApi({
+        accessToken: () => session.getAccessToken(),
+        assertRequest: assertBinding,
+      }),
+      threadId,
+      accountSub: expectedAccountSub,
+      bindingRevision: binding.revision,
+      email,
+      readCalendarOverrides: () => overrides(root),
+      assertBinding,
+    }
+  }
+  let invitationWork = 0
+  const withMailInvitations = async <T>(
+    work: (session: NonNullable<GoogleCapabilityDeps['mailInvitations']>) => Promise<T>,
+  ) => {
+    const session = deps.mailInvitations
+    if (!session)
+      throw new CapabilityError('UNAVAILABLE', 'mail invitation responses are unavailable')
+    invitationWork++
+    try {
+      return await work(session)
+    } finally {
+      // Disposing a vault cannot retire an in-flight write's journal or the
+      // shared session of another vault. Release the handle when this lease drains.
+      if (--invitationWork === 0 && disposed) session.closeStore()
+    }
   }
 
   const dataOf = async (remote: string): Promise<GoogleData> => {
@@ -736,7 +892,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
      * A page of threads matching Gmail's own search grammar; no query is the
      * inbox. Ordinary UI lists use the cache and history delta. CLI reads use
      * a fresh page; --json exposes its continuation token. Ordinary CLI text
-     * remains a thread array; --needs-reply text includes the page envelope.
+     * remains a thread array; --needs-reply and partial pages include the envelope.
      */
     'google.search': cap({
       doors: ['ui', 'cli', 'app'],
@@ -749,11 +905,38 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
           "threads matching Gmail's search grammar (the inbox). --needs-reply is a factual shortlist, not a classification of obligation: it selects incoming mail after the latest sent message, so a new incoming message remains eligible after an older reply; a draft is not a sent reply. The facts replied, lastReplyAt, addressedAs and automated describe Gmail evidence, not semantics: replied means a sent message followed an incoming message, and lastReplyAt is the latest such sent message time. addressedAs is the latest incoming message's recipient classification (to, cc, neither or unknown), or null when there is no incoming message; known send-as aliases are matched and unknown recipients remain eligible. Direct To is the default only with --needs-reply; --include-cc opts into Cc-only and --include-automated opts into positively recognized automation only in that mode, and neither flag otherwise filters results. No recognized automation evidence is not proof a human wrote it; automationUnknown marks MIME evidence that was unavailable or truncated and remains eligible. Filters apply to one Gmail page. Use --json to receive nextPageToken and continue with --pageToken <token>; an empty filtered page may still have a token and is not exhausted until nextPageToken is null.",
       },
       params: searchParams,
-      run: async (ctx, options) => {
-        const data = await dataOf(ctx.remote)
-        const page = (await google(() =>
-          data.threads(options, { freshPage: ctx.door === 'cli' }),
-        )) as CliMailPage
+      run: async (ctx, { refresh, expectedAccountSub, ...options }) => {
+        const ui = ctx.door === 'ui'
+        const binding = ui ? await deps.accounts.bindingFor(ctx.remote) : undefined
+        if (binding === null) throw new CapabilityError('UNAVAILABLE', NOT_CONNECTED, CONNECT)
+        const assertCurrent = () => {
+          ctx.assertCurrent?.()
+          if (disposed) throw new CapabilityError('UNAVAILABLE', 'this vault is stopped')
+          if (
+            binding &&
+            (!binding.isCurrent() ||
+              (expectedAccountSub !== undefined &&
+                binding.session.accountSub !== expectedAccountSub))
+          )
+            throw new CapabilityError('FORBIDDEN', 'Google account changed; reload Mail')
+        }
+        assertCurrent()
+        if (binding && !deps.dataForSession)
+          throw new CapabilityError('UNAVAILABLE', 'account-bound Google data is unavailable')
+        const data = binding ? deps.dataForSession!(binding.session) : await dataOf(ctx.remote)
+        const page = (await google(async () => {
+          assertCurrent()
+          try {
+            return await data.threads(options, {
+              freshPage: !ui,
+              refresh: ui && refresh,
+              bindingRevision: binding?.revision,
+              assertCurrent,
+            })
+          } finally {
+            assertCurrent()
+          }
+        })) as CliMailPage
         if (ctx.door === 'cli' && options.needsReply === true) {
           Object.defineProperty(page, NEEDS_REPLY_CLI_TEXT, { value: true })
         }
@@ -775,21 +958,57 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
         return value as CliMailPage
       },
       text: (page: CliMailPage) =>
-        JSON.stringify(page[NEEDS_REPLY_CLI_TEXT] ? page : page.threads, null, 2),
+        JSON.stringify(
+          page[NEEDS_REPLY_CLI_TEXT] || page.unreadableThreadIds ? page : page.threads,
+          null,
+          2,
+        ),
     }),
 
-    /**
-     * The meeting a thread is about, or null. Asked only for a thread whose
-     * summary carries an invite, and never cached: a moved meeting's join link
-     * is rewritten, and a stale one sends the person to an empty room.
-     */
-    'google.meeting': cap({
+    /** Account-bound invitation and join-only meeting cards, scoped per original occurrence. */
+    'google.mailInvitation': cap({
       doors: ['ui'],
-      params: idParams,
-      run: async (ctx, { id }) =>
-        google(async () =>
-          resolveThreadMeeting(apiOf(ctx.remote), id, { overrides: await overrides(ctx.root) }),
-        ),
+      params: invitationParams,
+      run: (ctx, input) =>
+        google(async () => {
+          const target = await invitationTarget(ctx, input)
+          const invitation = await withMailInvitations((session) => session.read(target))
+          target.assertBinding()
+          return invitation
+        }),
+    }),
+    // The renderer separately checks its own reader ownership after this await.
+    'google.validateMailInvitationBinding': cap({
+      doors: ['ui'],
+      params: invitationBindingParams,
+      run: async (ctx, { expectedAccountSub, expectedBindingRevision }): Promise<void> => {
+        const { assertBinding } = await invitationBinding(
+          ctx.remote,
+          expectedAccountSub,
+          expectedBindingRevision,
+        )
+        assertBinding()
+      },
+    }),
+    'google.respondToMailInvitation': cap({
+      doors: ['ui'],
+      params: invitationResponseParams,
+      run: (ctx, { identity, answer, expectedResponseTargetKey, ...target }) =>
+        google(async () => {
+          const bound = await invitationTarget(ctx, target)
+          const result = await withMailInvitations((session) =>
+            session.respond(bound, identity, answer, expectedResponseTargetKey),
+          )
+          try {
+            bound.assertBinding()
+            return result
+          } catch (error) {
+            if (result.outcome === 'unchanged') throw error
+            // A retired binding cannot disclose readback, but losing it after
+            // dispatch does not turn an accepted or uncertain write into a refusal.
+            return { ...result, invitation: null, refreshPending: true }
+          }
+        }),
     }),
 
     /**
@@ -800,8 +1019,33 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
      */
     'google.thread': cap({
       doors: ['ui'],
-      params: idParams,
-      run: async (ctx, { id }) => google(() => readThread(apiOf(ctx.remote), id)),
+      params: (raw) => {
+        const p = paramsObject(raw)
+        const expectedAccountSub = optionalStringParam(p, 'expectedAccountSub')
+        return {
+          ...idParams(p),
+          ...(expectedAccountSub === undefined ? {} : { expectedAccountSub }),
+        }
+      },
+      run: async (ctx, { id, expectedAccountSub }) => {
+        if (expectedAccountSub === undefined) return google(() => readThread(apiOf(ctx.remote), id))
+        const { session, assertBinding } = await invitationBinding(ctx.remote, expectedAccountSub)
+        return google(async () => {
+          assertBinding()
+          try {
+            return await readThread(
+              new GoogleApi({
+                accessToken: () => session.getAccessToken(),
+                assertRequest: assertBinding,
+              }),
+              id,
+            )
+          } finally {
+            // A 404 from a retired link must not mark a replacement account's thread gone.
+            assertBinding()
+          }
+        })
+      },
     }),
 
     /**
@@ -1460,6 +1704,7 @@ export function googleCapabilities(deps: GoogleCapabilityDeps) {
     connectGeneration += 1
     connectFlow?.cancel()
     connectFlow = null
+    if (invitationWork === 0) deps.mailInvitations?.closeStore()
   })
   return capabilities
 }

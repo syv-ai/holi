@@ -6,11 +6,12 @@
 import { fenceUntrusted } from '@holi/shared'
 import type { GoogleApi } from './api'
 import { fetchEventColors } from './event-colors'
+import { conferenceUrlIn } from '../shared/meeting-links'
 
-const BASE = 'https://www.googleapis.com/calendar/v3'
+export const BASE = 'https://www.googleapis.com/calendar/v3'
 
 /** The user's own answer to an invitation. */
-type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
+export type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
 
 /**
  * What kind of block this is.
@@ -78,7 +79,8 @@ export interface CalendarEvent {
   recurring: boolean
 }
 
-interface RawEvent {
+export interface RawEvent {
+  kind?: string
   id?: string
   summary?: string
   status?: string
@@ -95,10 +97,17 @@ interface RawEvent {
   colorId?: string
   /** Present on an instance of a recurring series; it is the series' id. */
   recurringEventId?: string
-  organizer?: { displayName?: string; email?: string }
+  organizer?: { displayName?: string; email?: string; self?: boolean }
+  iCalUID?: string
+  etag?: string
+  sequence?: number
+  recurrence?: string[]
+  originalStartTime?: RawEvent['start']
   conferenceData?: { entryPoints?: { entryPointType?: string; uri?: string }[] }
-  start?: { date?: string; dateTime?: string }
-  end?: { date?: string; dateTime?: string }
+  start?: { date?: string; dateTime?: string; timeZone?: string }
+  end?: RawEvent['start']
+  endTimeUnspecified?: boolean
+  attendeesOmitted?: boolean
   attendees?: {
     self?: boolean
     responseStatus?: string
@@ -110,7 +119,8 @@ interface RawEvent {
   }[]
 }
 
-interface CalendarListEntry {
+export interface CalendarListEntry {
+  kind?: string
   id: string
   summary: string
   /** The name *the user* gave this calendar. Google Calendar displays it in
@@ -119,6 +129,7 @@ interface CalendarListEntry {
   summaryOverride?: string
   primary?: boolean
   selected?: boolean
+  hidden?: boolean
   deleted?: boolean
   /** `owner` | `writer` | `reader` | `freeBusyReader`. What separates a calendar
    *  that is *yours* from one you merely watch. */
@@ -145,21 +156,13 @@ export interface CalendarChoice {
  *  rule applies. See `resolveCalendars`. */
 export type CalendarOverrides = Record<string, boolean>
 
-/**
- * The calendars an agenda should draw from.
- *
- * **`selected` is honoured**: it is the checkbox state in the user's own
- * Google Calendar UI, so Holi starts from the set they already curated rather
- * than every calendar they have ever been added to.
- * @public exported for its test
- */
-export async function listCalendars(api: GoogleApi): Promise<CalendarListEntry[]> {
+async function listCalendars(api: GoogleApi): Promise<CalendarListEntry[]> {
   const items = await api.getAll<CalendarListEntry>(
     `${BASE}/users/me/calendarList`,
-    { minAccessRole: 'reader', showDeleted: 'false' },
+    { minAccessRole: 'reader', showDeleted: 'false', showHidden: 'true' },
     (page) => page.items ?? [],
   )
-  return items.filter((c) => c.deleted !== true && c.selected !== false)
+  return items.filter((c) => c.deleted !== true)
 }
 
 /** Yours to answer for, rather than a colleague's you happen to watch. Google
@@ -168,6 +171,27 @@ export async function listCalendars(api: GoogleApi): Promise<CalendarListEntry[]
  *  events are yours. */
 function isMine(calendar: CalendarListEntry): boolean {
   return calendar.primary === true || calendar.accessRole === 'owner'
+}
+
+/** Mail publications/exports require provider visibility even if enabled in Holi. */
+export function calendarIsEnabledForLegacyMail(
+  calendar: CalendarListEntry,
+  overrides: CalendarOverrides,
+): boolean {
+  return providerCalendarVisible(calendar) && agendaCalendarEnabled(calendar, overrides)
+}
+
+function providerCalendarVisible(calendar: CalendarListEntry): boolean {
+  return calendar.hidden !== true && calendar.selected !== false
+}
+
+function agendaCalendarEnabled(calendar: CalendarListEntry, overrides: CalendarOverrides): boolean {
+  // Overrides bind to the declared ID, never the `primary` resource alias.
+  return (
+    calendar.deleted !== true &&
+    calendar.accessRole !== 'freeBusyReader' &&
+    (overrides[calendar.id] ?? (providerCalendarVisible(calendar) && isMine(calendar)))
+  )
 }
 
 /**
@@ -192,7 +216,7 @@ export async function resolveCalendars(
     name: calendar.summaryOverride ?? calendar.summary,
     mine: isMine(calendar),
     color: calendar.backgroundColor ?? null,
-    enabled: overrides[calendar.id] ?? isMine(calendar),
+    enabled: agendaCalendarEnabled(calendar, overrides),
     primary: calendar.primary === true,
   }))
 }
@@ -238,7 +262,7 @@ export async function listAgenda(
           },
           (page) => page.items ?? [],
         )
-        return { calendar, raw: raw.filter(isWorthShowing) }
+        return { calendar, raw: raw.filter(isAgendaEventVisible) }
       }),
     ),
   ])
@@ -249,42 +273,10 @@ export async function listAgenda(
     .sort(byStart)
 }
 
-/**
- * The one event an invite is about, found by the `UID` in its `.ics`.
- *
- * The UID is the identity iCalendar itself defines, and Google indexes it, so
- * this is an exact match rather than a guess from a subject line and a time.
- *
- * **Instances, from now on, one of them.** `singleEvents` expands a series, and
- * `timeMin` makes "the invite you are reading" resolve to the occurrence
- * actually coming up. A meeting entirely in the past therefore answers `null`,
- * deliberately: there is nothing to join.
- *
- * No palette request: the caller wants a link, not a tint.
- */
-export async function findEventByICalUid(
-  api: GoogleApi,
-  iCalUID: string,
-  options: { overrides?: CalendarOverrides; from?: string } = {},
-): Promise<CalendarEvent | null> {
-  const calendars = (await resolveCalendars(api, options.overrides ?? {})).filter((c) => c.enabled)
-  const timeMin = options.from ?? new Date(Date.now() - 60 * 60 * 1000).toISOString()
-
-  for (const calendar of calendars) {
-    const page = await api.get<{ items?: RawEvent[] }>(
-      `${BASE}/calendars/${encodeURIComponent(calendar.id)}/events`,
-      { iCalUID, singleEvents: 'true', orderBy: 'startTime', timeMin, maxResults: '1' },
-    )
-    const event = (page.items ?? []).filter(isWorthShowing)[0]
-    if (event !== undefined) return toCalendarEvent(event, calendar, {})
-  }
-  return null
-}
-
 /** Cancelled instances of a recurring series still come back (that is how a
  *  client learns they were cancelled), and an event the user declined is one
  *  they have already said they are not attending. */
-function isWorthShowing(event: RawEvent): boolean {
+export function isAgendaEventVisible(event: RawEvent): boolean {
   if (event.status === 'cancelled') return false
   // Google writes a `workingLocation` entry for every working day. It is a
   // setting rendered as an event, and on a week's agenda it is half the rows.
@@ -309,71 +301,22 @@ function asKind(eventType: string | undefined): EventKind {
   return EVENT_KINDS.find((k) => k === eventType) ?? 'default'
 }
 
-function asRsvp(status: string | undefined): RsvpStatus | null {
+export function asRsvp(status: string | undefined): RsvpStatus | null {
   return RSVP_STATUSES.find((s) => s === status) ?? null
 }
 
-/**
- * Join links Holi will follow out of an invite's prose, recognised by the shape
- * of the URL.
- *
- * An allowlist, and deliberately not "the first `https://` in the body". A real
- * Teams invite also carries `aka.ms/JoinTeamsMeeting`, a "Learn More" page and
- * often a dial-in lookup, any of which would win a first-URL race.
- *
- * Scoped to Meet, Zoom, Teams. Adding a host here is cheap; guessing at one is
- * not, because the failure is silent.
- */
-const JOIN_LINKS: RegExp[] = [
-  /^https:\/\/teams\.microsoft\.(?:com|us)\/l\/meetup-join\//i,
-  /^https:\/\/teams\.live\.com\/meet\//i,
-  /^https:\/\/[\w.-]*zoom\.us\/(?:j|w|my)\//i,
-  /^https:\/\/meet\.google\.com\/[a-z]{3}-/i,
-]
-
-/**
- * The first recognised join link in a block of text, or null.
- *
- * The text is an invite body, which Google hands over as HTML, so a URL arrives
- * inside `href="…"` with its ampersands escaped, hence both the delimiter set
- * and the `&amp;` unescape. Trailing sentence punctuation is trimmed, because a
- * link written into prose ends up with the full stop attached.
- */
-function joinLinkIn(text: string | undefined): string | null {
-  if (text === undefined) return null
-  for (const raw of text.match(/https:\/\/[^\s"'<>]+/gi) ?? []) {
-    const url = raw.replace(/&amp;/gi, '&').replace(/[.,;:)]+$/, '')
-    if (JOIN_LINKS.some((pattern) => pattern.test(url))) return url
-  }
-  return null
+export function structuredConference(event: RawEvent): string | undefined {
+  return (
+    event.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')?.uri ??
+    event.hangoutLink
+  )
 }
 
-/**
- * The video link, whoever hosts it.
- *
- * Four sources, in descending order of how much Google itself vouches for them:
- *
- * 1. `conferenceData`'s video entry point: the structured answer.
- * 2. `hangoutLink`: Meet-only, so a fallback rather than the answer.
- * 3. the invite's own body, then its location.
- *
- * (3) exists because Google only fills `conferenceData` for conferences *it*
- * created. A Teams meeting organised in Outlook and synced in over Exchange has
- * neither structured field, and its join link lives in the body as an anchor.
- * `location` is second because it usually just says "Microsoft Teams Meeting".
- *
- * Google's structured fields win over the prose deliberately: when a meeting is
- * moved, `conferenceData` is rewritten and a link left in the description is
- * not.
- */
 function conferenceUrlOf(event: RawEvent): string | null {
-  const video = event.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')
   return (
-    video?.uri ??
-    event.hangoutLink ??
-    joinLinkIn(event.description) ??
-    joinLinkIn(event.location) ??
-    null
+    structuredConference(event) ??
+    conferenceUrlIn(event.description) ??
+    conferenceUrlIn(event.location)
   )
 }
 
@@ -448,7 +391,7 @@ function byStart(a: CalendarEvent, b: CalendarEvent): number {
  *
  * Writes target `primary` only. A subscribed calendar is someone else's.
  */
-const PRIMARY_EVENTS = `${BASE}/calendars/primary/events`
+export const PRIMARY_EVENTS = `${BASE}/calendars/primary/events`
 
 /**
  * `sendUpdates=none` on every write, belt-and-braces with the attendee refusal.

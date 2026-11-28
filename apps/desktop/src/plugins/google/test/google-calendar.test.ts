@@ -12,7 +12,6 @@ import {
   createEvent,
   deleteEvent,
   listAgenda,
-  listCalendars,
   resolveCalendars,
   respondToEvent,
   updateEvent,
@@ -62,23 +61,6 @@ function timed(id: string, summary: string, start: string, extra: Record<string,
     ...extra,
   }
 }
-
-describe('listCalendars', () => {
-  it('honours the user’s own selection, dropping unchecked and deleted calendars', async () => {
-    const { api } = googleApi({
-      [CAL_LIST]: {
-        items: [
-          { id: 'primary', summary: 'Me', primary: true },
-          { id: 'rooms', summary: 'Meeting rooms', selected: false },
-          { id: 'old', summary: 'Old', deleted: true },
-          { id: 'team', summary: 'Team', selected: true },
-        ],
-      },
-    })
-
-    expect((await listCalendars(api)).map((c) => c.id)).toEqual(['primary', 'team'])
-  })
-})
 
 /**
  * Which calendars an agenda draws from, and which are someone else's.
@@ -189,9 +171,8 @@ describe('resolveCalendars', () => {
       },
     })
 
-    // `listCalendars` already drops it; the point here is that "yours" does not
-    // override an explicit untick in Google's own UI.
-    expect(await resolveCalendars(api, {})).toEqual([])
+    // It remains selectable in Holi, but being owned does not enable it by default.
+    expect(await resolveCalendars(api, {})).toMatchObject([{ id: 'archive', enabled: false }])
   })
 })
 
@@ -261,6 +242,25 @@ describe('listAgenda', () => {
     expect(events.map((e) => e.id)).toEqual(['mine'])
     // Not merely filtered afterwards — her calendar is never fetched at all.
     expect(seen.some((u) => u.includes(encodeURIComponent('jane')))).toBe(false)
+  })
+
+  it('applies overrides to readable calendars by declared ID, not to deleted or free/busy-only calendars', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: {
+        items: [
+          { id: 'me@example.com', summary: 'Me', primary: true, accessRole: 'owner' },
+          { id: 'hidden', summary: 'Hidden', hidden: true, accessRole: 'owner' },
+          { id: 'room', summary: 'Room', accessRole: 'freeBusyReader' },
+          { id: 'old', summary: 'Old', accessRole: 'owner', deleted: true },
+        ],
+      },
+      [eventsUrl('me@example.com')]: { items: [timed('mine', 'Mine', '2026-08-04T09:00:00Z')] },
+      [eventsUrl('hidden')]: { items: [timed('override', 'Override', '2026-08-04T10:00:00Z')] },
+    })
+    const agenda = await listAgenda(api, WINDOW, {
+      overrides: { primary: false, hidden: true, room: true, old: true },
+    })
+    expect(agenda.map(({ id }) => id)).toEqual(['mine', 'override'])
   })
 
   it('marks each event with whose calendar it came from, and its colour', async () => {

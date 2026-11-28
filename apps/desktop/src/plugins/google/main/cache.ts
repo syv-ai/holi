@@ -34,13 +34,21 @@ const SIDECARS = ['-wal', '-shm', '-journal']
 
 export interface GoogleCache {
   /**
-   * Wipe if the stored row shape is from an older release. Call before first use.
+   * Wipe if the stored rows are incompatible with this release. Call before first use.
    * Accounts are kept apart by living in **different files**, not by a
    * wipe here.
    */
   ensureShape(): void
+  /** The most recently committed variant of this list, which owns its cursor. */
+  latestMailListKey(key: string): string | null
+  /** Commit rows, pending metadata reads and cursor together. No IO inside. */
+  updateMailList<T>(write: () => T): T
   readThreads(key: string): MailThreadSummary[] | null
   writeThreads(key: string, threads: MailThreadSummary[]): void
+  /** Unresolved provider reads, separate from rows and the delta cursor. */
+  unreadableThreads(key: string): string[]
+  /** Resolve checked IDs, then record any that still failed. Returns pending IDs. */
+  updateUnreadableThreads(key: string, checked: string[], unreadable: string[]): string[]
   /**
    * Apply a label change to one thread **in every list that holds it**.
    *
@@ -68,7 +76,8 @@ export interface GoogleCache {
    * between. The cursor belongs to the list it was taken for.
    */
   historyId(key: string): string | null
-  setHistoryId(key: string, id: string): void
+  /** Clear the cursor when a partial snapshot cannot safely seed a delta. */
+  setHistoryId(key: string, id: string | null): void
   /** Delete the database file. Disconnect calls this. */
   destroy(): void
   /** Terminal disconnect: unlike destroy, later use cannot reopen the cache. */
@@ -77,15 +86,14 @@ export interface GoogleCache {
 }
 
 /**
- * The shape of the rows, not the shape of the tables.
+ * The shape and meaning of the rows, not the shape of the tables.
  *
- * `threads` and `agenda` hold whole objects as JSON, so a change to
- * `MailThreadSummary` or `CalendarEvent` is invisible to SQLite and invisible
- * on read: the row parses fine and is simply wrong. **Bump this whenever a
- * cached type changes**, or when `cacheKey` changes (old keys would otherwise
- * sit on disk unread forever).
+ * `threads` and `agenda` hold whole objects as JSON, so changes to their
+ * shape or derived fields (such as invitation badges) are invisible on read.
+ * Bump this when a cached type, classification or `cacheKey` changes. Clear
+ * history cursors too: unchanged threads otherwise keep their old classification.
  */
-const SHAPE_VERSION = '6'
+const SHAPE_VERSION = '7'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
@@ -153,6 +161,13 @@ export function openGoogleCache(path: string): GoogleCache {
     database().prepare('INSERT OR REPLACE INTO answered (kind, key) VALUES (?, ?)').run(kind, key)
   }
 
+  function unreadableThreads(key: string): string[] {
+    const row = database()
+      .prepare('SELECT value FROM meta WHERE key = ?')
+      .get(`unreadableThreads:${key}`) as { value: string } | undefined
+    return row ? (JSON.parse(row.value) as string[]) : []
+  }
+
   return {
     ensureShape() {
       const read = (key: string): string | undefined =>
@@ -161,16 +176,37 @@ export function openGoogleCache(path: string): GoogleCache {
             { value?: string } | undefined
         )?.value
 
-      // Rows are stored as whole objects, so a release that changes
-      // `MailThreadSummary` would serve yesterday's JSON into today's UI and
-      // break at the render, far from the change that caused it. Wiping is
-      // free: this is a cache.
+      // Only derived Google data lives here. Readers will rebuild it from Google.
       if (read('shape') === SHAPE_VERSION) return
 
       database().exec(
         'DELETE FROM threads; DELETE FROM agenda; DELETE FROM answered; DELETE FROM meta;',
       )
       database().prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('shape', SHAPE_VERSION)
+    },
+
+    latestMailListKey(key) {
+      // writeThreads marks the answer with INSERT OR REPLACE, ranking the
+      // variant's rowid by commit order without comparing Gmail history IDs.
+      const row = database()
+        .prepare(
+          "SELECT key FROM answered WHERE kind = 'threads' AND (key = ? OR instr(key, ?) = 1) ORDER BY rowid DESC LIMIT 1",
+        )
+        .get(key, `${key}|identity:`) as { key: string } | undefined
+      return row?.key ?? null
+    },
+
+    updateMailList(write) {
+      const db = database()
+      db.exec('BEGIN')
+      try {
+        const result = write()
+        db.exec('COMMIT')
+        return result
+      } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+      }
     },
 
     readThreads(key) {
@@ -192,6 +228,26 @@ export function openGoogleCache(path: string): GoogleCache {
         insert.run(key, position, thread.id, JSON.stringify(thread))
       })
       markAnswered('threads', key)
+    },
+
+    unreadableThreads,
+
+    updateUnreadableThreads(key, checked, unreadable) {
+      const previous = unreadableThreads(key)
+      if (!previous.length && !unreadable.length) return previous
+      const pending = new Set(previous)
+      for (const id of checked) pending.delete(id)
+      for (const id of unreadable) pending.add(id)
+      const ids = [...pending]
+      if (previous.length === ids.length && previous.every((id, index) => ids[index] === id))
+        return previous
+      const storageKey = `unreadableThreads:${key}`
+      if (ids.length)
+        database()
+          .prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
+          .run(storageKey, JSON.stringify(ids))
+      else database().prepare('DELETE FROM meta WHERE key = ?').run(storageKey)
+      return ids
     },
 
     patchThread(id, change) {
@@ -248,9 +304,11 @@ export function openGoogleCache(path: string): GoogleCache {
     },
 
     setHistoryId(key, id) {
-      database()
-        .prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
-        .run(historyKey(key), id)
+      if (id === null) database().prepare('DELETE FROM meta WHERE key = ?').run(historyKey(key))
+      else
+        database()
+          .prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
+          .run(historyKey(key), id)
     },
 
     destroy() {

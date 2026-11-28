@@ -6,11 +6,84 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 
 - **Connect** with authorization code + PKCE over a one-shot `127.0.0.1` listener, in the system browser. The client id and desktop secret ship in the binary; for an installed app neither is secret, and PKCE protects the grant. Scopes: `openid`, `email`, `gmail.modify`, `calendar.readonly`, `calendar.events`, `contacts.readonly`, `contacts.other.readonly`.
 - **The shipped client accepts syv.ai accounts only.** Its consent screen is Internal to the syv.ai Workspace, so Google refuses any other account in the browser with `Error 403: org_internal` and never redirects back; settings says so while a connect is waiting and after one that came to nothing. An Internal client has no test-user list and no 7-day refresh-token expiry.
-- **Bring your own client** for any other account, under Settings, Connections, OAuth client (`oauth-client.tsx`, a dialog from the row). In Google Cloud: enable the Gmail API, Google Calendar API and People API; configure the consent screen (External, adding yourself as a test user, or Internal for your own Workspace) with the scopes above; create an OAuth client of type **Desktop app** and paste its id and secret. A Desktop app client allows any `127.0.0.1` loopback port, so there is no redirect URI to register. An External client left in Testing has its refresh tokens expire after 7 days; publish it to Production to keep a connection (Google then shows its unverified-app warning, which for your own client is expected). The client is this machine's, `safeStorage`-encrypted in `userData/google-client.enc` as the tokens are (on macOS, by the Keychain), never in a vault; main keeps the secret and the renderer only ever sees the id. Where the OS offers no encryption (some Linux setups), saving one is refused rather than written in plain text, just as the tokens are, and going back to the default client still works. The client in use is resolved in one place (`resolveClient`): your own, else `HOLI_GOOGLE_CLIENT_ID` with `HOLI_GOOGLE_CLIENT_SECRET` from the environment (which an app opened from Finder does not see), else the shipped pair. **A grant belongs to the client that made it**, so saving a different client id revokes and removes every account on this machine, with its cache, before the switch, so no refresh meets the new client with an old grant; the button names how many and asks once more before it acts. The same id with a new secret is the same client and keeps every account. A connect cancelled, or overtaken by a client change, while its code is being exchanged has the grant that comes back revoked rather than saved.
+- **Bring your own client** for any other account, under Settings, Connections, OAuth client (`oauth-client.tsx`, a dialog from the row). In Google Cloud: enable the Gmail API, Google Calendar API and People API; configure the consent screen (External, adding yourself as a test user, or Internal for your own Workspace) with the scopes above; create an OAuth client of type **Desktop app** and paste its id and secret. A Desktop app client allows any `127.0.0.1` loopback port, so there is no redirect URI to register. An External client left in Testing has its refresh tokens expire after 7 days; publish it to Production to keep a connection (Google then shows its unverified-app warning, which for your own client is expected). The client is this machine's, `safeStorage`-encrypted in `userData/google-client.enc` as the tokens are (on macOS, by the Keychain), never in a vault; main keeps the secret and the renderer only ever sees the id. Where the OS offers no encryption (some Linux setups), saving one is refused rather than written in plain text, just as the tokens are, and going back to the default client still works. The client in use is resolved in one place (`resolveClient`): your own, else `HOLI_GOOGLE_CLIENT_ID` with `HOLI_GOOGLE_CLIENT_SECRET` from the environment (which an app opened from Finder does not see), else the shipped pair. **A grant belongs to the client that made it**, so saving a different client id retires every account locally, with its cache, before the switch; the button names how many and asks once more before it acts. The same id with a new secret is the same client and keeps every account. A grant returned after a cancelled or superseded connect is not saved. Holi attempts Google project revocation for retired or unused grants only when it would not affect a newer connection.
 - **Main is the sole token authority.** Refresh tokens rotate on use, so only main refreshes, single-flighted per account. Tokens are `safeStorage`-encrypted in `userData/google-auth.enc`, keyed by the account's `sub`.
-- **Each vault names its account** in `userData/google-vault-accounts.json` (`owner/repo` → `sub`), outside the clone. One account may serve several vaults; linking a stored account needs no consent. _Disconnect this vault_ drops the mapping, at once, because _Use in this vault_ undoes it; _Remove from Holi_ revokes at Google, deletes tokens and cache, and unlinks every vault, so Connections asks first ("Remove … from Holi?", a destructive _Remove account_) and holds the dialog open while the revoke runs. Connections' errors and the reconnect warning are `text-destructive` and wrap rather than truncate. A new vault is never mapped automatically.
+- **Each vault names its account** in `userData/google-vault-accounts.json`
+  (`owner/repo` → `sub`), outside the clone. One account may serve several vaults;
+  linking a stored account needs no consent. _Disconnect this vault_ drops the
+  mapping, at once, because _Use in this vault_ undoes it; _Remove from Holi_ asks
+  first, then stops local access, deletes the tokens and unlinks every vault before
+  attempting Google revocation. It also clears the local cache. If a revocation's
+  remote outcome is unknown, that Google account stays blocked on this installation,
+  even after restart or a client change. A definitive refusal, such as Google's
+  `400 invalid_token`, ends that attempt without blocking a fresh connection. For
+  an unknown outcome, use another Google account and review any remaining access in
+  your Google Account's third-party connections. Connections' errors and the reconnect
+  warning are `text-destructive` and wrap rather than truncate. A new vault is never
+  mapped automatically.
 - **Scope drift:** an old grant keeps working and 403s only the newly added calls. `missingScopes()` compares stored scopes in Google's vocabulary (`email` returns as `.../userinfo.email`) and settings offers **Reconnect**.
-- **Mail cache:** one `node:sqlite` file per account, `userData/google-cache-<sub>.db`, last 500 threads, reconciled by `history.list` deltas. The key carries every filter that narrows a list; the history cursor is per key; archive and trash arrive as label changes and land in a _left_ bucket. Bump `SHAPE_VERSION` when a cached type changes. A removed or dead account deletes the file and its sidecars.
+- **Mail cache:** one `node:sqlite` file per account,
+  `userData/google-cache-<sub>.db`, last 500 threads, reconciled by `history.list`
+  deltas. The key carries every filter that narrows a list; the history cursor is
+  per key; archive and trash arrive as label changes and land in a _left_ bucket.
+  When history exceeds its work budget or has expired, **Try again** and
+  **Refresh mail** fetch a fresh snapshot for that list. Open readers withdraw
+  invitation actions and verify their selected thread directly, including selections
+  from **Load more**. Omission from a snapshot is not deletion proof. CLI, vault-app
+  and background reads do not rebaseline UI lists. Bump `SHAPE_VERSION` when a cached
+  type changes. A removed or dead account deletes the file and its sidecars.
+- **Thread triage writes** paint first and revert on refusal; main calls Google first
+  and updates the cache only on success. Archive and trash, of one thread or a
+  selection, raise one toast ("Thread moved to Trash", "2 threads archived") that stays
+  until dismissed and offers **Undo**: undo beats a confirmation for a frequent,
+  reversible removal. Undo calls `google.unarchive` (`INBOX` back on) or
+  `google.untrash` (Gmail's `/untrash`), UI-door only, and re-reads the list;
+  nothing is put back into the cache, because `history.list` brings both changes back.
+  Mail RSVP does not paint an unconfirmed answer.
+- **Mail's panes** share one left edge: the toolbar, selection bar, find bar and
+  reader's action row use `PaneToolbar`; the subject wraps on its own row. Reply,
+  Reply all, Archive, Trash and Star stay on the action row. Summarize, Task,
+  Continue draft, Forward, Unsubscribe and Open in Gmail sit in **More actions** so
+  the row fits the reader at its 280px floor. A row's checkbox shows on hover and
+  keyboard focus. Loading uses skeleton rows; disconnected, failed, empty and
+  “Pick a thread” use the shared `EmptyState`. Failed writes appear above the list.
+- **Meeting invitations in Mail** use the same cards in both readers. A calendar
+  MIME part can open a card even when the thread has no attachment badge. The
+  cards show the organizer, time, location and confirmed response when known. A
+  floating time keeps the invitation's wall clock rather than taking the host's
+  time zone. A series and a separately invited occurrence have distinct cards:
+  Accept, Maybe and Decline apply only to the eligible invitation on that card.
+  A verified meeting without a response to make can still offer a link, but not RSVP.
+- **Mail RSVP** updates only the attendee's entry on a verified, writable Calendar
+  copy, using the selected series or original occurrence. Only when Calendar
+  verifies that no matching copy exists does Holi send an iTIP reply through Gmail to
+  the organizer. Holi requests threading with reply headers and the original thread ID;
+  Gmail can put the reply in a separate Sent thread. Readback checks account-wide
+  Sent ownership of its message ID even if the reply is in the original thread. A
+  blocked or inconclusive Calendar lookup is not permission to send mail. An exact
+  Calendar resource can confirm an earlier response without authorizing another
+  write when the collection omits the copy. Gmail fallback also needs a not-found
+  response for that known resource. When Calendar and a verified Sent reply
+  disagree, the card distinguishes the answer recorded in Calendar from the answer
+  in Sent. It disables an answer already recorded at the current target. An
+  unanswered Calendar copy does not erase a confirmed reply. Google's acceptance
+  of a write does not prove organizer delivery.
+  Main binds the response to the vault's linked account and exact invitation revision.
+  Opening a card link checks the binding revision in main without contacting Google,
+  then rechecks that the reader still owns the card. A pending or refused response is
+  not shown as confirmed. After a write without readback, the card keeps the meeting
+  details but withholds the response badge until a fresh read. **Retry** checks the
+  thread and provider status again; it never repeats the send or opens a link.
+- **Calendar** shows calendars the user owns by default; per-calendar overrides
+  are the plugin's `calendars` setting in the vault's
+  `.holi/settings/plugins.local.yaml`, read in main so the agent and apps honour
+  them too. Events carry `mine`. Calendar prefers structured conference fields
+  over links in the description or location. Mail and Calendar recognize the
+  same conference hosts and paths in prose. In Mail, **Join meeting** requires
+  a recognized conference URL, and **Open in Google Calendar** requires a Google
+  event URL. An unrecognized explicit HTTPS link from the invitation instead
+  shows its actual host beside **Open email link**; prose alone cannot add such a
+  link to the card.
 - **Unread attention:** the Mail sidebar badge is Gmail's exact unread `INBOX`
   thread count, available before Mail opens and shown only while its last count is
   fresh. Main polls once a minute per connected account session; vaults sharing
@@ -26,9 +99,6 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
   be running with that vault activated; this is not closed-app delivery.
   Attention polling updates the badge and banners, not Mail's thread list, which
   refreshes through its existing list flow.
-- **Writes:** the renderer paints first and reverts on refusal; main calls Google first and updates the cache only on success. Every thread action takes that one path. Archive and trash, of one thread or a selection, then raise one toast ("Thread moved to Trash", "2 threads archived") that stays until dismissed and offers **Undo**: undo beats a confirmation for a frequent, reversible removal. Undo calls `google.unarchive` (`INBOX` back on) or `google.untrash` (Gmail's `/untrash`), UI-door only, and re-reads the list; nothing is put back into the cache, because `history.list` brings both changes back.
-- **Mail's panes** share one left edge: the toolbar, the selection bar, the find bar and the reader's action row are each a `PaneToolbar` (`px-4`), and the thread below them is `px-4` with each message's chevron, addresses and body on the subject's edge. The reader's subject has its own wrapping row, the one place a subject the list truncated reads in full; under it, Reply, Reply all, Archive, Trash and Star stay on the row (and Join for a meeting), and Summarize, Task, Continue draft, Forward, Unsubscribe and Open in Gmail sit in one **More actions** menu, so the row fits the reader at its 280px floor. A row's checkbox shows on hover and on keyboard focus; its tab and labels are `Badge`s. Loading is skeleton rows; disconnected (with _Open Connections_), failed (with _Try again_), empty and "Pick a thread" are the shared `EmptyState`. A failed write is a `text-destructive` line above the list.
-- **Calendar** shows calendars the user owns by default; per-calendar overrides are the plugin's `calendars` setting in the vault's `.holi/settings/plugins.local.yaml`, read in main so the agent and apps honour them too. Events carry `mine`. Joining uses `conferenceData`, then the body, then the location, matching a join-link shape. A thread with an `.ics` is joined to its event by the invite's `UID`.
 - **The calendar view** (`renderer/calendar/`, the `calendar` app tab) is ReUI's `event-calendar-3` block over the same capabilities: a rail with the calendars picker, a mini month and the selected day, beside ReUI's event calendar in day, week (the default), month and agenda views, Monday first. The view selector's Agenda is the calendar list; there is no separate Agenda launcher. A tab's **Open in split view** puts Calendar beside another view, and opening Calendar again focuses its existing tab or split. Two of the plugin's settings, the vault's (committed in `plugins.yaml`, overridable in `plugins.local.yaml`) and shown under Settings, Google, Calendar, shape how it reads: `timeFormat` (`24h`, or `12h`) is the clock of every time it writes, the grid's gutter, the chips, the rail, the anchored event card and the form's time selects, and `weekNumbers` (on) puts ISO week numbers down the side of its month. A sideways trackpad swipe or a shift-scroll over it pages one day, week or month in that direction and the view slides in from that side; one swipe is one period, however long its momentum runs, and vertical scrolling stays the grid's (`use-wheel-swipe.ts`, on the calendar's own `api.next`/`api.prev`, so the stock ReUI files stay as installed). It asks `google.agenda` for whatever range the calendar shows (at most 92 days) and `google.calendars` for the colours and the picker, whose ticks are `google.setCalendar`. An event Holi may change, a solo one on the primary calendar (the account's address), can be dragged, resized, edited and deleted; the drag paints first and Google's refusal puts it back with a toast. Moves and edits are `google.reschedule`, deletes `google.unschedule` (both refused by main when anyone is invited), and the CLI's `google.schedule` remains silent solo creation. In the anchored event card, the UI can create an event on the primary calendar with guest addresses and optionally Google Meet (off by default). Sending invitations requires the explicit **Create and send invitations** action; Enter never sends. A solo event uses **Add event**. Each submission is durably bound to its account and stable event ID before Google is called. Reopening and checking status are read-only: uncertain delivery keeps the submitted details locked until its status is known, and a created event with a pending or failed Meet is recovered without creating a duplicate event. Other events open in the anchored card, with descriptions in the sandboxed frame, or in Google Calendar. Holi does not offer calendar CRUD, booking facts or notes.
 - **Composer:** markdown with a preview through the reader's sanitiser and frame; main sends exactly the previewed HTML as `multipart/alternative`, the markdown as the plain part, marked `X-Holi-Source: markdown`. Drafts live in Gmail and all of them open (unmarked ones via `turndown`). Autosave from the first edit, 2 s idle, single-flight. Reply is sender-only unless reply-all. Edit and Preview are a `ToggleGroup`; the editor is named "Message", and the compose dialog's visible title, "New message", is its accessible name.
 - **Linking** a thread or event makes a task with the permalink as a plain markdown link in its body ([tasks](tasks.md)).
@@ -50,7 +120,21 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - Never write "the agent cannot send": `gmail.modify` permits it; the gate is the wall. Do not widen past `gmail.modify`.
 - A send with unknown outcome is never retried. UI send is not gated.
 - Mail data stays in `userData`, per account, never in a vault.
-- Treat a new Google call as broken until it has run against a real account; fakes written from docs have passed on broken code, and Gmail answers some bad requests with an empty 200.
+- Verify new Google calls against a real account when fixtures cannot model the
+  relevant behavior. Fakes written from docs have passed on broken code, and Gmail
+  answers some bad requests with an empty 200. Mail invitation acceptance can use a
+  protocol-faithful offline Google transport through both production readers and
+  capabilities, not stubs that simply report success. The fixture covers inline and
+  attached calendar MIME, Calendar updates and readback, Gmail refusal and exact
+  message-ID readback from Sent in a separate thread, conflicting Calendar and Sent
+  answers, read-only Retry, and a blocked write after an account switch. This does
+  not verify live email delivery. To capture isolated evidence, run from the repo root
+  on macOS or Linux with the pinned Electron binary and `ffmpeg` installed:
+
+  ```sh
+  node apps/desktop/scripts/run-mail-invitation-smoke.mjs \
+    --evidence-dir=/absolute/new-directory
+  ```
 
 ## Rejected
 
@@ -62,7 +146,6 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 - Encrypting the cache: needs a native module and forecloses FTS5.
 - Per-vault cache or wipe-on-switch: mail is account data, and wiping refetches on every switch.
 - Calendar `syncToken`: incompatible with `timeMin`/`timeMax`.
-- Parsing join links from the `.ics`: a second, drifting source of truth.
 - `labels.get` for tab counts: counts archived mail.
 - A refcounted single disconnect: one button with hidden meanings.
 - Rich-text composing or a local draft store: a second model, a second home.
@@ -74,4 +157,7 @@ A vault can connect a Google account to read and triage Gmail, read its calendar
 
 - The `google` plugin, on by default (nothing shows until an account is connected on this machine): `apps/desktop/src/plugins/google/`.
 - `main/`: `index.ts` (activation: the accounts manager, each account's cache, the capabilities), `untrusted.ts` (what the CLI door fences), `passthrough.ts` (`holi google api`'s rule table and its answer's fence), auth (`loopback-flow`, `pkce`, `credentials`, `session`, `accounts`, `vault-accounts`, `token-store`, `electron`, loaded only at activation), data (`gmail`, `mail-sync`, `cache`, `data`, `calendar`, `invite`, `people`, `mime`), `capabilities` (every door) and `seed.ts` with `vault/shipped/.claude/hooks/google-send-gate.mjs` and `skills/gmail-calendar/`, plus the gate's hook entries and ask rules.
+- `main/invite.ts` provides the legacy meeting-hint wrapper. `main/mail-invitation.ts`
+  and `main/mail-invitation-*.ts` own calendar MIME discovery, provider reconciliation,
+  response authorization, and durable RSVP recovery.
 - `renderer/`: the `mail` surface, the Mail and Calendar sidebar app registrations and their nav items (shown once an account is connected, `account.ts`, whose atoms follow the open vault and a refresh nonce), the Connections settings section, the compose dialog (opened as the plugin dialog), `mail-html.ts` and `mail-frame.ts`. Making a task from a thread or event types only the `tasks.create` slice it calls (`tasks.ts`) and shows only while `useHasCapability('tasks.create')`; Summarize hands the agent a prompt through the agent service (`useAgentService`), and shows only while there is one.

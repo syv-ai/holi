@@ -120,6 +120,7 @@
     "estree-util-build-jsx": "^3.0.1",
     "estree-util-to-js": "^2.0.0",
     "htmlparser2": "^10.1.0",
+    "ical.js": "^2.2.1",
     "input-otp": "^1.5.0",
     "jotai": "^2.20.1",
     "jszip": "^3.10.1",

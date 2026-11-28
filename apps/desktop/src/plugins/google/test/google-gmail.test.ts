@@ -8,6 +8,8 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { GoogleApi } from '../main/api'
+import { openGoogleCache } from '../main/cache'
+import { createGoogleData } from '../main/data'
 import {
   bodyHtmlOf,
   bodyTextOf,
@@ -256,6 +258,167 @@ describe('htmlToText', () => {
 })
 
 describe('listThreads', () => {
+  it('returns a usable partial Mail page through cached delta and retry', async () => {
+    let oversized = false
+    let outsideFirstPage = false
+    let metadataStatus = 200
+    let mailboxStatus = 200
+    let malformedMetadata: object | null | undefined
+    const healthy = {
+      id: 'healthy',
+      messages: [
+        {
+          id: 'm-healthy',
+          internalDate: '1000',
+          labelIds: ['INBOX', 'Label_12'],
+          payload: {
+            mimeType: 'text/calendar',
+            headers: [
+              header('From', 'host@example.com'),
+              header('To', 'alias@example.com'),
+              header('Subject', 'Planning meeting'),
+              header('Content-Type', 'text/calendar; method=REQUEST'),
+            ],
+          },
+        },
+      ],
+    }
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input))
+      if (init?.method && init.method !== 'GET') throw new Error('Mail list only reads')
+      const path = url.pathname
+      if (path.endsWith('/settings/sendAs'))
+        return Response.json({ sendAs: [{ sendAsEmail: 'alias@example.com' }] })
+      if (path.endsWith('/labels'))
+        return Response.json({ labels: [{ id: 'Label_12', name: 'Work', type: 'user' }] })
+      if (path.endsWith('/history') && url.searchParams.get('startHistoryId') === '10' && oversized)
+        return Response.json({
+          historyId: '20',
+          history: [{ messagesAdded: [{ message: { threadId: 'oversized' } }] }],
+        })
+      if (path.endsWith('/history')) return Response.json({ historyId: oversized ? '20' : '10' })
+      if (path.endsWith('/profile')) return Response.json({ historyId: oversized ? '20' : '10' })
+      if (path.endsWith('/threads')) {
+        if (mailboxStatus !== 200) return Response.json({}, { status: mailboxStatus })
+        return Response.json(
+          url.searchParams.get('q')?.includes('filename:ics')
+            ? { threads: [{ id: 'healthy' }] }
+            : url.searchParams.get('pageToken') === 'next-page'
+              ? { threads: metadataStatus === 404 ? [] : [{ id: 'oversized' }] }
+              : {
+                  threads: outsideFirstPage
+                    ? [{ id: 'healthy' }]
+                    : [{ id: 'oversized' }, { id: 'healthy' }],
+                  nextPageToken: 'next-page',
+                },
+        )
+      }
+      if (url.searchParams.get('format') === 'metadata') {
+        if (path.endsWith('/threads/healthy')) return Response.json(healthy)
+        if (path.endsWith('/threads/oversized')) {
+          if (metadataStatus !== 200)
+            return Response.json(
+              metadataStatus === 403
+                ? { error: { details: [{ reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT' }] } }
+                : {},
+              { status: metadataStatus },
+            )
+          if (malformedMetadata !== undefined) return Response.json(malformedMetadata)
+          const message = {
+            id: 'm-other',
+            internalDate: '2000',
+            labelIds: ['INBOX'],
+            payload: { mimeType: 'text/plain', headers: [header('Subject', 'Other thread')] },
+          }
+          return Response.json({
+            id: 'oversized',
+            messages: oversized
+              ? Array.from({ length: 2049 }, (_, i) => ({ ...message, id: `m-${i}` }))
+              : [message],
+          })
+        }
+      }
+      throw new Error(`Unexpected Google read: ${url}`)
+    }
+    const cache = openGoogleCache(':memory:')
+    try {
+      const data = createGoogleData({
+        api: () => new GoogleApi({ accessToken: async () => 'at', fetch }),
+        cache,
+      })
+      const options = { mailbox: 'inbox' as const }
+      expect((await data.threads(options)).threads.map(({ id }) => id)).toEqual([
+        'oversized',
+        'healthy',
+      ])
+      oversized = true
+      const partial = {
+        unreadableThreadIds: ['oversized'],
+        threads: [
+          {
+            id: 'healthy',
+            subject: 'Planning meeting',
+            labels: ['Work'],
+            addressedAs: 'to',
+            hasInvite: true,
+          },
+        ],
+      }
+      expect(await data.threads(options)).toMatchObject(partial)
+      outsideFirstPage = true
+      expect(await data.threads(options, { refresh: true })).toMatchObject({
+        ...partial,
+        nextPageToken: 'next-page',
+      })
+      for (const response of [{}, null, { id: 'oversized', messages: [] }, healthy]) {
+        malformedMetadata = response
+        expect(await data.threads(options, { refresh: true })).toMatchObject({
+          ...partial,
+          nextPageToken: 'next-page',
+        })
+      }
+      malformedMetadata = undefined
+      metadataStatus = 503
+      const transient = await data.threads(options, { refresh: true })
+      expect(transient).toMatchObject({ ...partial, nextPageToken: 'next-page' })
+      expect(transient).not.toHaveProperty('notFoundThreadIds')
+      metadataStatus = 403
+      await expect(data.threads(options, { refresh: true })).rejects.toMatchObject({
+        code: 'scope',
+      })
+      metadataStatus = 200
+      mailboxStatus = 503
+      await expect(data.threads(options, { refresh: true })).rejects.toMatchObject({ status: 503 })
+      mailboxStatus = 200
+      oversized = false
+      const recovered = await data.threads(options, { refresh: true })
+      expect(recovered).toMatchObject({ threads: partial.threads, nextPageToken: 'next-page' })
+      expect(recovered).not.toHaveProperty('unreadableThreadIds')
+      const continuation = { ...options, pageToken: recovered.nextPageToken! }
+      expect(await data.threads(continuation)).toMatchObject({
+        threads: [{ id: 'oversized', subject: 'Other thread' }],
+        nextPageToken: null,
+      })
+
+      oversized = true
+      expect(await data.threads(continuation)).toMatchObject({
+        threads: [],
+        unreadableThreadIds: ['oversized'],
+      })
+      metadataStatus = 404
+      const removed = await data.threads(options, { refresh: true })
+      expect(removed).toMatchObject({
+        threads: partial.threads,
+        nextPageToken: 'next-page',
+        notFoundThreadIds: ['oversized'],
+      })
+      expect(removed).not.toHaveProperty('unreadableThreadIds')
+      expect(await data.threads(options, { refresh: true })).not.toHaveProperty('notFoundThreadIds')
+    } finally {
+      cache.close()
+    }
+  })
+
   it.each([
     ['new incoming after a reply', ['INBOX'], ['SENT'], ['INBOX'], true, false],
     ['draft after incoming', ['INBOX'], ['DRAFT'], undefined, true, false],
@@ -283,7 +446,7 @@ describe('listThreads', () => {
     },
   )
 
-  it('recognizes nested calendar invitations only on the latest incoming message', async () => {
+  it('recognizes nested calendar invitations from a headers-only probe of the latest incoming message', async () => {
     const invitation = {
       id: 'invite-message',
       internalDate: '1000',
@@ -295,11 +458,10 @@ describe('listThreads', () => {
           {
             mimeType: 'multipart/alternative',
             parts: [
-              { mimeType: 'text/plain', body: { data: b64('Please see invitation') } },
+              { mimeType: 'text/plain' },
               {
                 mimeType: 'text/calendar',
                 headers: [header('Content-Type', 'text/calendar; method=REQUEST')],
-                body: { data: b64('BEGIN:VCALENDAR\\nMETHOD:REQUEST') },
               },
             ],
           },
@@ -351,46 +513,184 @@ describe('listThreads', () => {
     expect(mimeProbe?.searchParams.get('fields')).not.toMatch(/body|data|attachmentId/i)
   })
 
-  it('marks MIME invitation evidence beyond the inspected depth as unknown', async () => {
-    let nested: Record<string, unknown> = {
-      mimeType: 'multipart/mixed',
-      parts: [{ mimeType: 'text/calendar' }],
-    }
-    for (let depth = 0; depth < 8; depth += 1) {
-      nested = { mimeType: 'multipart/mixed', parts: [nested] }
-    }
-    const { api } = gmail(
-      [{ id: 'nested-thread' }],
-      {
-        'nested-thread': {
-          id: 'nested-thread',
-          messages: [
-            {
-              id: 'nested-message',
-              internalDate: '1000',
-              labelIds: ['INBOX'],
-              payload: { mimeType: 'multipart/mixed' },
+  it.each([
+    ['(forwarded (original)) message/rfc822; name="meeting (copy).eml"', false],
+    ['(unclosed message/rfc822', true],
+  ] as const)(
+    'does not promote calendar mail inside a forward in a headers-only probe (%s)',
+    async (declaration, unknown) => {
+      const id = 'incoming'
+      const root = { mimeType: 'multipart/mixed', headers: [header('To', 'me@example.com')] }
+      const { api } = gmail(
+        [{ id: 't' }],
+        { t: { id: 't', messages: [{ id, threadId: 't', labelIds: ['INBOX'], payload: root }] } },
+        [],
+        undefined,
+        [],
+        {
+          [id]: {
+            id,
+            threadId: 't',
+            payload: {
+              ...root,
+              parts: [
+                {
+                  mimeType: 'application/octet-stream',
+                  headers: [header('Content-Type', declaration)],
+                  parts: [
+                    {
+                      mimeType: 'multipart/mixed',
+                      parts: [
+                        { mimeType: 'text/calendar; method=REQUEST' },
+                        { mimeType: 'text/calendar; method=CANCEL' },
+                      ],
+                    },
+                  ],
+                },
+              ],
             },
-          ],
+          },
         },
-      },
-      [],
-      undefined,
-      [],
-      {
-        'nested-message': {
-          id: 'nested-message',
-          threadId: 'nested-thread',
-          payload: nested,
-        },
-      },
-    )
+      )
+      expect((await listThreads(api)).threads[0]).toMatchObject({
+        automated: false,
+        automationUnknown: unknown,
+      })
+    },
+  )
 
-    expect((await listThreads(api)).threads[0]).toMatchObject({
-      automated: false,
-      automationUnknown: true,
-    })
-  })
+  it.each([
+    ['another-message', 'one-thread'],
+    [undefined, 'one-thread'],
+    ['requested-message', 'another-thread'],
+    ['requested-message', 'one-thread'],
+  ])(
+    'probes a commented multipart wrapper and checks both returned IDs (%s, %s)',
+    async (returnedId, returnedThread) => {
+      const threadId = 'one-thread'
+      const id = 'requested-message'
+      // Gmail's metadata projection leaves the MIME children unexpanded.
+      const payload = {
+        mimeType: 'application/octet-stream',
+        headers: [
+          header('To', 'me@example.com'),
+          header('Content-Type', '(outer (comment)) multipart (type) / mixed; boundary="invite"'),
+        ],
+      }
+      const { api, seen } = gmail(
+        [{ id: threadId }],
+        {
+          [threadId]: {
+            id: threadId,
+            messages: [
+              {
+                id,
+                threadId,
+                labelIds: ['INBOX'],
+                payload,
+              },
+            ],
+          },
+        },
+        [],
+        undefined,
+        [],
+        {
+          [id]: {
+            id: returnedId,
+            threadId: returnedThread,
+            payload: {
+              ...payload,
+              parts: [{ mimeType: 'text/calendar; method=REQUEST' }],
+            },
+          },
+        },
+      )
+      const exact = returnedId === id && returnedThread === threadId
+      expect((await listThreads(api, {}, ['me@example.com'])).threads).toMatchObject([
+        {
+          id: threadId,
+          hasInvite: exact,
+          automated: exact,
+          automationUnknown: !exact,
+          needsReply: true,
+        },
+      ])
+      const messageReads = seen
+        .map((input) => new URL(input))
+        .filter((url) => url.pathname.includes('/messages/'))
+      expect(messageReads).toHaveLength(1)
+      expect(messageReads[0]?.pathname).toMatch(new RegExp(`/messages/${id}$`))
+      const fields = messageReads[0]?.searchParams.get('fields')
+      expect(fields).toMatch(/^id,threadId,payload\(/)
+      expect(fields).not.toMatch(/body|data|attachmentId/i)
+      const cache = openGoogleCache(':memory:')
+      try {
+        const data = createGoogleData({ api: () => api, cache })
+        expect((await data.threads({ needsReply: true })).threads.map(({ id }) => id)).toEqual(
+          exact ? [] : [threadId],
+        )
+      } finally {
+        cache.close()
+      }
+    },
+  )
+
+  it.each(['depth', 'header count', 'header bytes'])(
+    'reports exhausted MIME invitation evidence as unknown (%s)',
+    async (limit) => {
+      const calendar = {
+        mimeType: 'text/calendar',
+        headers: [header('Content-Type', 'text/calendar; method=REQUEST')],
+      }
+      let nested: Record<string, unknown> = { mimeType: 'multipart/mixed', parts: [calendar] }
+      if (limit === 'depth') {
+        for (let depth = 0; depth < 9; depth += 1) {
+          nested = {
+            mimeType: 'multipart/mixed',
+            parts: depth === 8 ? [calendar, nested] : [nested],
+          }
+        }
+      } else {
+        const headers =
+          limit === 'header count'
+            ? Array.from({ length: 200 }, () => header('X-Header', 'value'))
+            : [header('X-Large', 'x'.repeat(64 * 1024))]
+        nested.parts = [calendar, { mimeType: 'text/plain', headers }]
+      }
+      const { api } = gmail(
+        [{ id: 'nested-thread' }],
+        {
+          'nested-thread': {
+            id: 'nested-thread',
+            messages: [
+              {
+                id: 'nested-message',
+                internalDate: '1000',
+                labelIds: ['INBOX'],
+                payload: { mimeType: 'multipart/mixed' },
+              },
+            ],
+          },
+        },
+        [],
+        undefined,
+        [],
+        {
+          'nested-message': {
+            id: 'nested-message',
+            threadId: 'nested-thread',
+            payload: nested,
+          },
+        },
+      )
+
+      expect((await listThreads(api)).threads[0]).toMatchObject({
+        automated: false,
+        automationUnknown: true,
+      })
+    },
+  )
 
   it('omits a vanished MIME probe per thread without losing the page or continuation', async () => {
     const incoming = (id: string, threadId: string) => ({
@@ -976,9 +1276,23 @@ describe('listThreads', () => {
   it('asks Gmail for the label names once, not once per thread', async () => {
     // The N+1 this whole area keeps inviting: a per-thread lookup would be 25
     // extra requests to render 25 chips.
+    const ids = ['t1', 't2', 't3']
+    const threads = Object.fromEntries(
+      ids.map((id) => [
+        id,
+        {
+          id,
+          messages: filed.messages.map((message) => ({
+            ...message,
+            id: `${id}-${message.id}`,
+            threadId: id,
+          })),
+        },
+      ]),
+    )
     const { api, seen } = gmail(
-      [{ id: 't1' }, { id: 't2' }, { id: 't3' }],
-      { t1: filed, t2: filed, t3: filed },
+      ids.map((id) => ({ id })),
+      threads,
       USER_LABELS,
     )
 
@@ -1145,6 +1459,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: {
               headers: [
                 header('From', 'ada@syv.ai'),
@@ -1152,6 +1467,7 @@ describe('readThread', () => {
                 header('Cc', '"Carol, Jones: Esq." <carol@syv.ai>'),
               ],
               mimeType: 'text/plain',
+              body: { size: 0 },
             },
           },
         ],
@@ -1174,6 +1490,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             internalDate: '1000000000000',
             payload: {
               headers: [
@@ -1218,6 +1535,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             internalDate: '1000',
             payload: {
               headers: [header('Subject', 'The deck')],
@@ -1250,6 +1568,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: {
               headers: [],
               mimeType: 'multipart/alternative',
@@ -1275,6 +1594,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: {
               headers: [],
               mimeType: 'multipart/mixed',
@@ -1309,6 +1629,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: {
               headers: [
                 header('To', 'jane@x.com'),
@@ -1332,7 +1653,12 @@ describe('readThread', () => {
 
   it('shows an untitled thread rather than an empty heading', async () => {
     const { api } = gmail([], {
-      t1: { id: 't1', messages: [{ id: 'm1', payload: { headers: [] } }] },
+      t1: {
+        id: 't1',
+        messages: [
+          { id: 'm1', threadId: 't1', payload: { mimeType: 'text/plain', body: { size: 0 } } },
+        ],
+      },
     })
 
     expect((await readThread(api, 't1')).subject).toBe('(no subject)')
@@ -1351,6 +1677,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             internalDate: '1000000000000',
             payload: {
               headers: [header('Subject', 'Newsletter')],
@@ -1380,6 +1707,7 @@ describe('readThread', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: { headers: [], mimeType: 'text/plain', body: { data: b64('hi') } },
           },
         ],
@@ -1399,7 +1727,13 @@ describe('textOnly', () => {
     const { api } = gmail([], {
       t1: {
         id: 't1',
-        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+        messages: [
+          {
+            id: 'm1',
+            threadId: 't1',
+            payload: { mimeType: 'text/html', body: { data: b64(html) } },
+          },
+        ],
       },
     })
 
@@ -1415,7 +1749,13 @@ describe('textOnly', () => {
     const { api } = gmail([], {
       t1: {
         id: 't1',
-        messages: [{ id: 'm1', payload: { mimeType: 'text/html', body: { data: b64(html) } } }],
+        messages: [
+          {
+            id: 'm1',
+            threadId: 't1',
+            payload: { mimeType: 'text/html', body: { data: b64(html) } },
+          },
+        ],
       },
     })
     const thread = await readThread(api, 't1')
@@ -1435,9 +1775,11 @@ describe('textOnly', () => {
     const html = '<p>On Tuesday Ada wrote:</p><blockquote><p>Old quoted text.</p>'
     const { api } = gmail([], {
       t1: {
+        id: 't1',
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             payload: {
               mimeType: 'multipart/alternative',
               parts: [
@@ -1446,7 +1788,11 @@ describe('textOnly', () => {
               ],
             },
           },
-          { id: 'm2', payload: { mimeType: 'text/html', body: { data: b64(html) } } },
+          {
+            id: 'm2',
+            threadId: 't1',
+            payload: { mimeType: 'text/html', body: { data: b64(html) } },
+          },
         ],
       },
     })
@@ -1601,6 +1947,7 @@ describe('addresses', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             internalDate: '1000',
             payload: {
               mimeType: 'text/plain',
@@ -1626,6 +1973,7 @@ describe('addresses', () => {
         messages: [
           {
             id: 'm1',
+            threadId: 't1',
             internalDate: '1000',
             payload: {
               mimeType: 'text/plain',
@@ -1912,9 +2260,12 @@ describe('send, draft and reply', () => {
     messages: [
       {
         id: 'm1',
+        threadId: 't1',
         labelIds: ['INBOX'],
         internalDate: '1000',
         payload: {
+          mimeType: 'text/plain',
+          body: { size: 0 },
           headers: [
             header('Message-ID', '<msg-1@mail.example>'),
             header('Subject', 'Q2 budget'),
@@ -1925,9 +2276,12 @@ describe('send, draft and reply', () => {
       },
       {
         id: 'm2',
+        threadId: 't1',
         labelIds: ['SENT'],
         internalDate: '2000',
         payload: {
+          mimeType: 'text/plain',
+          body: { size: 0 },
           headers: [
             header('Message-ID', '<msg-2@mail.example>'),
             header('Subject', 'Re: Q2 budget'),
@@ -1938,9 +2292,12 @@ describe('send, draft and reply', () => {
       },
       {
         id: 'm3',
+        threadId: 't1',
         labelIds: ['INBOX'],
         internalDate: '3000',
         payload: {
+          mimeType: 'text/plain',
+          body: { size: 0 },
           headers: [
             header('Message-ID', '<msg-3@mail.example>'),
             header('Subject', 'Re: Q2 budget'),
@@ -2822,6 +3179,7 @@ describe('fetchMessageAttachments', () => {
     const bytes = Buffer.from([0xfb, 0xef, 0xbe])
     const api = messageWith(
       {
+        mimeType: 'multipart/mixed',
         parts: [
           { filename: 'x.bin', mimeType: 'application/octet-stream', body: { attachmentId: 'a1' } },
         ],
@@ -2838,6 +3196,7 @@ describe('fetchMessageAttachments', () => {
     // An inline text part is not a file, and a forward that attached the
     // message body as a download would be nonsense.
     const api = messageWith({
+      mimeType: 'multipart/mixed',
       parts: [{ mimeType: 'text/plain', body: { data: 'aGk' } }],
     })
 

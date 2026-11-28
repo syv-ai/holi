@@ -48,7 +48,6 @@ import {
   SquarePen,
   Star,
   Trash2,
-  Video,
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -65,6 +64,7 @@ import {
   openExternal,
 } from '@/plugin-api'
 import { buildSummarizePrompt } from './summarize-prompt'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -99,53 +99,19 @@ import {
 import type { ComposeIntent } from './compose-intent'
 import { listStamp, messageStamp } from './mail-stamp'
 import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from './mail-types'
+import { MailPartialAlert } from './mail/mail-partial-alert'
+import { useMailList } from './mail/use-mail-list'
+import { useMailThread } from './mail/use-mail-thread'
 import { googleCap } from './google-cap'
-import { explainWriteFailure, isDisconnected } from './google-errors'
+import { explainWriteFailure } from './google-errors'
 import { TASKS_CREATE, tasksCreateCap } from './tasks-cap'
 import { useGoogleAccount } from './account'
 import { useMailMarkers } from './use-mail-markers'
 import { useMailMarkerActions } from './use-mail-marker-actions'
 import { MailMarkerRetry, MailMarkerStatus } from './mail-marker-icon'
+import { MailInvitation } from './mail/mail-invitation'
 
-interface ThreadSummary {
-  id: string
-  subject: string
-  from: MailAddress
-  date: string
-  snippet: string
-  unread: boolean
-  /** The last message is one the user sent: replied, waiting on them. */
-  answered: boolean
-  messageCount: number
-  webUrl: string
-  starred: boolean
-  important: boolean
-  /** An unsent draft sits in this thread. */
-  hasDraft: boolean
-  category: MailCategory | null
-  /** A calendar invite is attached somewhere in the thread. Resolved in main by
-   *  one scoped query, not by inflating the summary fetch. See `fetchInviteIds`. */
-  hasInvite: boolean
-  /** User label names, already resolved in main. */
-  labels: string[]
-  unsubscribeUrl: string | null
-}
-
-/**
- * The meeting a thread turned out to be about. Mirrors `ThreadMeeting` in
- * `main/google/invite.ts`.
- *
- * `conferenceUrl` is null for a meeting with no video call; the whole value
- * being null means there is no such meeting on the calendar.
- */
-interface ThreadMeeting {
-  eventId: string
-  title: string
-  start: string
-  end: string
-  conferenceUrl: string | null
-  htmlLink: string
-}
+type ThreadSummary = Awaited<ReturnType<typeof googleCap.search>>['threads'][number]
 
 interface Thread {
   id: string
@@ -159,19 +125,6 @@ interface MailCounts {
   unread: number
   total: number
 }
-
-type ListState =
-  | { kind: 'loading' }
-  | {
-      kind: 'ready'
-      threads: ThreadSummary[]
-      /** null when Gmail says there is nothing further. */
-      nextPageToken: string | null
-      /** When these threads were obtained from Google, ISO. */
-      syncedAt: string
-    }
-  | { kind: 'disconnected' }
-  | { kind: 'error'; message: string }
 
 export function MailView() {
   const { currentSub } = useGoogleAccount()
@@ -190,25 +143,20 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   /** The thread's scroller. What actually moves when find steps to a match: the
    *  match itself is inside a frame that never scrolls. */
   const readerRef = useRef<HTMLDivElement>(null)
-  const [list, setList] = useState<ListState>({ kind: 'loading' })
   const [counts, setCounts] = useState<MailCounts | null>(null)
   /** The address book, fetched once and filtered locally, so completing from it
    *  does not cost a request per keystroke. */
   const [contacts, setContacts] = useState<MailAddress[]>([])
   /** Why the last triage action did not stick. Cleared on the next attempt. */
   const [writeError, setWriteError] = useState<string | null>(null)
-  const [open, setOpen] = useState<Thread | null>(null)
-  const [openId, setOpenId] = useState<string | null>(null)
+  const threadReader = useMailThread()
+  const {
+    id: openId,
+    thread: open,
+    error: threadError,
+    refreshing: threadRefreshing,
+  } = threadReader
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
-  /**
-   * The meeting the open thread is about, once main has matched its invite to a
-   * calendar event. Null until then, and for every thread that is not a meeting.
-   *
-   * **Keyed by the thread it was asked about.** The answer can land after the
-   * reader has moved on; without the key the next thread would inherit the
-   * previous one's Join button.
-   */
-  const [meeting, setMeeting] = useState<(ThreadMeeting & { threadId: string }) | null>(null)
   /**
    * Where the list is pointed: a tab, Sent, or Drafts. One union so that
    * impossible places like "Drafts, filtered to Promotions" cannot be expressed.
@@ -223,7 +171,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
    *  FROM. `null` before anything has been picked, when a shift-click can only
    *  mean "select this one". */
   const [anchor, setAnchor] = useState<string | null>(null)
-  const [loadingMore, setLoadingMore] = useState(false)
   /** Unread per Gmail tab. `null` until the picker is first opened: five
    *  requests is too much for a dropdown nobody has touched. */
   const [categoryCounts, setCategoryCounts] = useState<CategoryCounts | null>(null)
@@ -262,6 +209,43 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       remote === null ? Promise.reject(new Error('No vault is open.')) : work(remote),
     [remote],
   )
+  const showDrafts = view.kind === 'drafts'
+  const searching = submitted !== ''
+
+  /**
+   * What actually narrows the request.
+   *
+   * **A search escapes the place it was started from**, tab and mailbox alike,
+   * as Gmail's own search does. ANDing either onto a query silently narrows it.
+   *
+   * `unread` is a *state*, not a place, so it survives a search. It is dropped
+   * for Sent and Drafts, where it does not apply.
+   */
+  const filter = searching || view.kind !== 'category' ? undefined : (view.category ?? undefined)
+  const mailbox = searching || view.kind !== 'sent' ? undefined : ('sent' as const)
+  const unreadFilter = view.kind === 'category' && unreadOnly ? true : undefined
+
+  const params = useMemo(
+    () => ({ query: submitted, category: filter, unread: unreadFilter, mailbox }),
+    [submitted, filter, unreadFilter, mailbox],
+  )
+  const {
+    list,
+    setList,
+    load,
+    refresh: refreshList,
+    loadMore,
+    retryPartial,
+    working,
+  } = useMailList(
+    call,
+    params,
+    !showDrafts,
+    listGeneration,
+    setWriteError,
+    threadReader.watchNotFound,
+  )
+
   const markers = useMailMarkers({
     remote,
     accountSub,
@@ -335,44 +319,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
     },
     [composeGate],
   )
-
-  const showDrafts = view.kind === 'drafts'
-  const searching = submitted !== ''
-
-  /**
-   * What actually narrows the request.
-   *
-   * **A search escapes the place it was started from**, tab and mailbox alike,
-   * as Gmail's own search does. ANDing either onto a query silently narrows it.
-   *
-   * `unread` is a *state*, not a place, so it survives a search. It is dropped
-   * for Sent and Drafts, where it does not apply.
-   */
-  const filter = searching || view.kind !== 'category' ? undefined : (view.category ?? undefined)
-  const mailbox = searching || view.kind !== 'sent' ? undefined : ('sent' as const)
-  const unreadFilter = view.kind === 'category' && unreadOnly ? true : undefined
-
-  const load = useCallback(() => {
-    setList({ kind: 'loading' })
-    listGeneration.current++
-    void call((r) =>
-      googleCap.search(r, { query: submitted, category: filter, unread: unreadFilter, mailbox }),
-    )
-      .then((page) =>
-        setList({
-          kind: 'ready',
-          threads: page.threads,
-          nextPageToken: page.nextPageToken,
-          syncedAt: page.syncedAt,
-        }),
-      )
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : 'Could not load your mail.'
-        setList(isDisconnected(err) ? { kind: 'disconnected' } : { kind: 'error', message })
-      })
-  }, [submitted, filter, unreadFilter, mailbox, call])
-
-  useEffect(load, [load])
 
   /** The footer's numbers. One request, and a failure leaves the footer
    *  numberless rather than the list broken. */
@@ -551,15 +497,16 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
     setContinuing(undefined)
     setDraftsGeneration((generation) => generation + 1)
 
-    if (!sent || open === null || composing === null || composing.kind === 'new') return
-    const threadId = open.id
-    const originRemote = remoteRef.current
-    void call((r) => googleCap.thread(r, { id: threadId }))
-      .then((thread) => {
-        if (originRemote === store.get(activeRemoteAtom) && remoteRef.current === originRemote)
-          setOpen(thread)
-      })
-      .catch(() => undefined)
+    if (
+      !sent ||
+      open === null ||
+      composing === null ||
+      composing.kind === 'new' ||
+      composing.threadId !== open.id ||
+      !threadReader.actorIsCurrent()
+    )
+      return
+    threadReader.fetchThread(open.id, 'refresh')
     load()
   }
 
@@ -574,38 +521,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
   }
 
   /**
-   * The next page, **appended**. A button rather than an infinite scroller:
-   * Gmail is rate limited, and one trackpad flick would spend a minute's quota.
-   */
-  const loadMore = (pageToken: string) => {
-    setLoadingMore(true)
-    void call((r) =>
-      googleCap.search(r, {
-        query: submitted,
-        category: filter,
-        unread: unreadFilter,
-        mailbox,
-        pageToken,
-      }),
-    )
-      .then((page) => {
-        listGeneration.current++
-        setList((previous) =>
-          previous.kind === 'ready'
-            ? {
-                kind: 'ready',
-                threads: [...previous.threads, ...page.threads],
-                nextPageToken: page.nextPageToken,
-                syncedAt: page.syncedAt,
-              }
-            : previous,
-        )
-      })
-      // A failed "load more" leaves what is already on screen alone.
-      .finally(() => setLoadingMore(false))
-  }
-
-  /**
    * Open a thread.
    *
    * The row's **summary** is kept alongside the fetched thread: flags such as
@@ -616,23 +531,8 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       composerRef.current = null
       // A find bar left open would count matches in the previous thread.
       setFindOpen(false)
-      setOpenId(thread.id)
       setOpenSummary(thread)
-      setOpen(null)
-      setMeeting(null)
-      void call((r) => googleCap.thread(r, { id: thread.id }))
-        .then(setOpen)
-        .catch(() => setOpenId(null))
-      // Only for a thread the list already says holds an `.ics`, to avoid two
-      // requests per open. A failure is swallowed deliberately: the badge still
-      // says this is a meeting, and a convenience lookup does not merit a banner.
-      if (thread.hasInvite) {
-        void call((r) => googleCap.meeting(r, { id: thread.id }))
-          .then((found) => {
-            if (found !== null) setMeeting({ ...found, threadId: thread.id })
-          })
-          .catch(() => undefined)
-      }
+      threadReader.fetchThread(thread.id)
       // Only when there is something to change: the API is rate limited.
       if (thread.unread) void setRead(thread.id, true)
     }, true)
@@ -719,8 +619,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
       if (!left) return false
     }
     if (openId === id) {
-      setOpen(null)
-      setOpenId(null)
+      threadReader.closeThread()
       setOpenSummary(null)
     }
     return write(mutate, (threads) => threads.filter((t) => t.id !== id))
@@ -872,6 +771,19 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
         ? { kind: 'error' as const }
         : { kind: 'ready' as const, marker: openIntent.marker }
   const renderedComposeIdentity = composeGate.current()?.identity
+  const threadFailure = openId !== null && threadError !== null && (
+    <Alert variant="destructive">
+      <AlertTitle>
+        {open === null ? 'Couldn’t open this thread' : 'Couldn’t refresh this thread'}
+      </AlertTitle>
+      <AlertDescription>
+        <p className="break-words">{threadError}</p>
+        <Button type="button" variant="outline" size="xs" onClick={threadReader.retry}>
+          Retry
+        </Button>
+      </AlertDescription>
+    </Alert>
+  )
 
   const closeRenderedComposer = (): void => {
     if (
@@ -965,7 +877,7 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
               }}
               onRefresh={() => {
                 markers.invalidate()
-                load()
+                refreshList()
                 loadCounts()
                 // Only if already loaded: refresh must not be what first spends
                 // five requests on a dropdown.
@@ -989,6 +901,16 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
             </div>
           )}
 
+          {!showDrafts &&
+            list.kind === 'ready' &&
+            (list.recoveryError !== undefined || !!list.unreadableThreadIds?.length) && (
+              <MailPartialAlert
+                busy={working !== null}
+                retrying={working === 'retry'}
+                recoveryError={list.recoveryError}
+                onRetry={list.recoveryError === undefined ? retryPartial : refreshList}
+              />
+            )}
           <div className="min-h-0 flex-1 overflow-y-auto">
             {showDrafts && <DraftsList reloadKey={draftsGeneration} onOpen={continueDraft} />}
             {!showDrafts && list.kind === 'loading' && (
@@ -1007,23 +929,28 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                 role="alert"
                 title="Couldn’t load your mail"
                 description={list.message}
-                action={{ label: 'Try again', onClick: load }}
+                action={{ label: 'Try again', onClick: refreshList }}
               />
             )}
             {/* Names the filter: an empty tab and an empty mailbox otherwise
                 look identical. */}
-            {!showDrafts && list.kind === 'ready' && list.threads.length === 0 && (
-              <EmptyState
-                icon={Inbox}
-                title={emptyMessage(view, filter, unreadOnly)}
-                description={emptyDetail(filter)}
-                action={
-                  unreadOnly && view.kind === 'category'
-                    ? { label: 'Show all mail', onClick: () => setUnreadOnly(false) }
-                    : undefined
-                }
-              />
-            )}
+            {!showDrafts &&
+              list.kind === 'ready' &&
+              list.recoveryError === undefined &&
+              list.threads.length === 0 &&
+              !list.unreadableThreadIds?.length &&
+              list.nextPageToken === null && (
+                <EmptyState
+                  icon={Inbox}
+                  title={emptyMessage(view, filter, unreadOnly)}
+                  description={emptyDetail(filter)}
+                  action={
+                    unreadOnly && view.kind === 'category'
+                      ? { label: 'Show all mail', onClick: () => setUnreadOnly(false) }
+                      : undefined
+                  }
+                />
+              )}
             {!showDrafts &&
               list.kind === 'ready' &&
               list.threads.map((thread) => {
@@ -1073,10 +1000,10 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                   variant="secondary"
                   size="xs"
                   className="w-full"
-                  disabled={loadingMore}
-                  onClick={() => loadMore(list.nextPageToken!)}
+                  disabled={working !== null}
+                  onClick={loadMore}
                 >
-                  {loadingMore ? 'Loading…' : 'Load more'}
+                  {working === 'more' ? 'Loading…' : 'Load more'}
                 </Button>
               </div>
             )}
@@ -1126,7 +1053,14 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
           ) : openId === null ? (
             <EmptyState icon={MailOpen} title="Pick a thread to read it" />
           ) : open === null ? (
-            <LoadingRows label="Loading the thread" lines={3} />
+            threadFailure ? (
+              <div className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 py-3">
+                <h3 className="text-sm font-medium text-pretty break-words">{openRow?.subject}</h3>
+                {threadFailure}
+              </div>
+            ) : (
+              <LoadingRows label="Loading the thread" lines={3} />
+            )
           ) : (
             <>
               {/* The subject on its own row, wrapping: it is the one place a
@@ -1148,38 +1082,6 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
                 )}
               </div>
               <PaneToolbar>
-                {/* First, as the only time-sensitive action. The link is NOT
-                    parsed out of the invite: main matched its `UID` to the
-                    calendar event, and this is that event's `conferenceUrl`,
-                    falling back to the event's page. */}
-                {meeting !== null && meeting.threadId === openId && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="secondary"
-                        size="xs"
-                        aria-label={
-                          meeting.conferenceUrl !== null
-                            ? 'Join this meeting'
-                            : 'Open this meeting in Google Calendar'
-                        }
-                        onClick={() => openExternal(meeting.conferenceUrl ?? meeting.htmlLink)}
-                      >
-                        {meeting.conferenceUrl !== null ? (
-                          <Video className="size-3.5" />
-                        ) : (
-                          <CalendarDays className="size-3.5" />
-                        )}
-                        {meeting.conferenceUrl !== null ? 'Join' : 'Meeting'}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">
-                      {meeting.conferenceUrl !== null
-                        ? `Join ${meeting.title}`
-                        : `Open ${meeting.title} in Google Calendar`}
-                    </TooltipContent>
-                  </Tooltip>
-                )}
                 {/* Reply, reply-all and forward all open the same inline
                     composer below. `replyTarget` rather than the last message:
                     replying to your own last reply addresses you. */}
@@ -1288,6 +1190,19 @@ function MailViewAccount({ accountSub }: { accountSub: string | null }) {
               )}
 
               <div ref={readerRef} className="min-h-0 flex-1 overflow-y-auto px-4 pb-8">
+                {threadRefreshing ? (
+                  <LoadingRows label="Refreshing the thread" rows={1} lines={3} />
+                ) : (
+                  threadFailure ||
+                  (open.id === openId && (
+                    <MailInvitation
+                      thread={open}
+                      hasInvite={openRow?.hasInvite === true}
+                      generation={threadReader.generation}
+                      isCurrentGeneration={threadReader.isCurrentGeneration}
+                    />
+                  ))
+                )}
                 {open.messages.map((message, index) => (
                   <MessageBlock
                     key={message.id}

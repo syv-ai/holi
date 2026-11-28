@@ -12,7 +12,7 @@
  * action that does not fix it.
  */
 import { describe, expect, it, vi } from 'vitest'
-import { GoogleApi, GoogleApiError } from '../main/api'
+import { GoogleApi, GoogleApiError, GoogleResourceDecodeError } from '../main/api'
 
 /** A `fetch` that records what it was handed and answers with `response`. */
 function fetchWith(response: Partial<Response> & { status?: number }) {
@@ -36,6 +36,24 @@ function apiWith(response: Parameters<typeof fetchWith>[0], token = 'at-1') {
 
 const MODIFY = 'https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/modify'
 const SEND = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
+
+it('distinguishes invalid JSON in a resource GET from a non-JSON HTTP refusal', async () => {
+  const resource = 'https://www.googleapis.com/calendar/v3/calendars/primary/events/id'
+  const get = (status: number) =>
+    new GoogleApi({
+      accessToken: async () => 'fixture-token',
+      fetch: async () => new Response('<html>not JSON</html>', { status }),
+    }).get(resource)
+
+  await expect(get(200)).rejects.toBeInstanceOf(GoogleResourceDecodeError)
+  for (const [status, code] of [
+    [401, 'reconnect'],
+    [403, 'unknown'],
+    [429, 'rate-limit'],
+  ] as const) {
+    await expect(get(status)).rejects.toMatchObject({ status, code })
+  }
+})
 
 describe('post', () => {
   it('sends a POST carrying the bearer token and a JSON body', async () => {

@@ -6,8 +6,9 @@
  * **It polls only while an approved schedule listens**, and only for what it
  * listens for: the agent says so at every check (`interest`), and with
  * nothing listening there is no timer and no request. Every few minutes then:
- * the agenda (one request per calendar), and each query through the mail
- * cache's `history.list` delta, one request when nothing is new.
+ * the agenda (one request per calendar), and a fresh first page of up to
+ * 25 mail threads per query. It compares observed thread versions without
+ * rebasing the mail readers' history cursors.
  *
  * **Mail is what changed while Holi watched.** A query's first look is the
  * baseline, so a restart does not fire on the mail already there; what
@@ -60,8 +61,8 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
   let timer: ReturnType<typeof setInterval> | null = null
   let polling = false
   let stopped = false
-  /** Per query, each thread's version as last seen. */
-  const seen = new Map<string, Map<string, string>>()
+  /** Per query, each thread's last seen version (null if unreadable at baseline). */
+  const seen = new Map<string, Map<string, string | null>>()
   let observed: GoogleData | null = null
   const current = async (data: GoogleData) => !stopped && (await deps.data()) === data
 
@@ -85,14 +86,22 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
 
   async function mail(data: GoogleData, query: string): Promise<void> {
     if (!(await current(data))) return
-    const page = await data.threads({ query, limit: THREADS })
+    const page = await data.threads({ query, limit: THREADS }, { freshPage: true })
     if (!(await current(data))) return
     const before = seen.get(query)
-    const after = new Map<string, string>()
+    const after = new Map<string, string | null>()
     for (const t of page.threads) {
       const version = `${t.messageCount}:${t.date}`
+      const previous = before?.get(t.id)
       after.set(t.id, version)
-      if (before === undefined || before.get(t.id) === version || t.answered || stopped) continue
+      if (
+        before === undefined ||
+        previous === null ||
+        previous === version ||
+        t.answered ||
+        stopped
+      )
+        continue
       ctx.events.emit({
         type: 'happened',
         source: 'mail',
@@ -102,6 +111,13 @@ export function startGoogleTriggers(ctx: PluginCtx, deps: GoogleTriggerDeps): Di
         query,
         from: t.from.email,
       })
+    }
+    // Keep unreadable threads from the baseline in the query without inventing
+    // a version. A thread first listed later can still fire when it becomes readable.
+    const missing = new Set(page.notFoundThreadIds)
+    for (const id of page.unreadableThreadIds ?? []) {
+      const version = before === undefined ? null : before.get(id)
+      if (version !== undefined && !after.has(id) && !missing.has(id)) after.set(id, version)
     }
     seen.set(query, after)
   }

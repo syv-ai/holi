@@ -289,49 +289,63 @@ describe('createGoogleData', () => {
   it('keeps ordinary cache identity lookup failures recoverable', async () => {
     let identitiesAvailable = false
     let threadFetches = 0
-    const fetchImpl = vi.fn(async (url: string) => {
-      const path_ = new URL(url).pathname
-      if (path_.includes('/threads/t1')) threadFetches++
-      const body = path_.endsWith('/settings/sendAs')
-        ? identitiesAvailable
-          ? { sendAs: [{ sendAsEmail: 'me@example.com' }] }
-          : null
-        : path_.endsWith('/labels')
-          ? { labels: [] }
-          : path_.endsWith('/profile')
-            ? { historyId: '1' }
-            : path_.endsWith('/threads')
-              ? { threads: [{ id: 't1' }] }
-              : path_.includes('/threads/')
-                ? {
-                    id: 't1',
-                    messages: [
-                      {
-                        id: 'm1',
-                        internalDate: '1000',
-                        labelIds: ['INBOX'],
-                        payload: { headers: [{ name: 'To', value: 'me@example.com' }] },
-                      },
-                    ],
-                  }
-                : {}
-      return {
-        ok: identitiesAvailable || !path_.endsWith('/settings/sendAs'),
-        status: identitiesAvailable || !path_.endsWith('/settings/sendAs') ? 200 : 503,
-        json: async () => body,
-        text: async () => JSON.stringify(body),
+    let snapshots = 0
+    const historyStarts: (string | null)[] = []
+    const fetchImpl: typeof globalThis.fetch = async (input) => {
+      const { pathname, searchParams } = new URL(String(input))
+      if (pathname.endsWith('/settings/sendAs')) {
+        return identitiesAvailable
+          ? Response.json({ sendAs: [{ sendAsEmail: 'me@example.com', isPrimary: true }] })
+          : Response.json({ error: { status: 'UNAVAILABLE' } }, { status: 503 })
       }
-    }) as unknown as typeof globalThis.fetch
+      if (pathname.endsWith('/labels')) return Response.json({ labels: [] })
+      if (pathname.endsWith('/profile')) {
+        snapshots++
+        return Response.json({ emailAddress: 'me@example.com', historyId: '1' })
+      }
+      if (pathname.endsWith('/history')) {
+        historyStarts.push(searchParams.get('startHistoryId'))
+        return Response.json({ historyId: '2' })
+      }
+      if (pathname.endsWith('/threads')) {
+        if (searchParams.get('q')?.includes('filename:ics')) return Response.json({})
+        if (searchParams.get('q') === 'in:inbox') return Response.json({ threads: [{ id: 't1' }] })
+      }
+      if (pathname.endsWith('/threads/t1') && searchParams.get('format') === 'metadata') {
+        threadFetches++
+        return Response.json({
+          id: 't1',
+          messages: [
+            {
+              id: 'm1',
+              threadId: 't1',
+              internalDate: '1000',
+              labelIds: ['INBOX'],
+              payload: {
+                mimeType: 'text/plain',
+                headers: [{ name: 'To', value: 'me@example.com' }],
+              },
+            },
+          ],
+        })
+      }
+      throw new Error(`Unexpected Gmail read: ${pathname}`)
+    }
     const subject = createGoogleData({
       api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
       cache,
     })
     subject.ensureShape()
 
-    expect((await subject.threads({})).threads[0]!.addressedAs).toBe('unknown')
+    expect(await subject.threads({})).toMatchObject({
+      threads: [{ id: 't1', addressedAs: 'unknown' }],
+    })
     identitiesAvailable = true
-    expect((await subject.threads({})).threads[0]!.addressedAs).toBe('to')
+    expect(await subject.threads({})).toMatchObject({ threads: [{ id: 't1', addressedAs: 'to' }] })
+    expect(await subject.threads({})).toMatchObject({ threads: [{ id: 't1', addressedAs: 'to' }] })
     expect(threadFetches).toBe(2)
+    expect(snapshots).toBe(1)
+    expect(historyStarts).toEqual(['1', '2'])
   })
 
   it('a cached agenda is served before Google answers', async () => {
@@ -827,6 +841,7 @@ describe('forwarded attachments', () => {
         return ok({
           id: 'src-1',
           payload: {
+            mimeType: 'multipart/mixed',
             parts: Array.from({ length: attachmentCount }, (_, i) => ({
               filename: `f${i}.pdf`,
               mimeType: 'application/pdf',

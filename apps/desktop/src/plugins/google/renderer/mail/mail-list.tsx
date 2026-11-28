@@ -45,6 +45,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { MailPartialAlert } from './mail-partial-alert'
 import { cn } from '@/plugin-api'
 import { listStamp } from '../mail-stamp'
 import { MailMarkerStatus } from '../mail-marker-icon'
@@ -503,13 +504,18 @@ export function MailList({
           title="Couldn’t load your mail"
           description={list.message}
           action={
-            <Button variant="outline" size="xs" onClick={mail.load}>
+            <Button variant="outline" size="xs" onClick={mail.refreshList}>
               Try again
             </Button>
           }
         />
       )
-    if (list.threads.length === 0)
+    if (
+      list.recoveryError === undefined &&
+      list.threads.length === 0 &&
+      !list.unreadableThreadIds?.length &&
+      list.nextPageToken === null
+    )
       return (
         <ListMessage
           icon={<InboxIcon aria-hidden="true" />}
@@ -545,6 +551,14 @@ export function MailList({
       )
     return (
       <>
+        {(list.recoveryError !== undefined || !!list.unreadableThreadIds?.length) && (
+          <MailPartialAlert
+            busy={mail.listWorking !== null}
+            retrying={mail.listWorking === 'retry'}
+            recoveryError={list.recoveryError}
+            onRetry={list.recoveryError === undefined ? mail.retryPartial : mail.refreshList}
+          />
+        )}
         <div role="list" aria-label={title}>
           {list.threads.map((thread) => {
             const intent = mail.markerActions.get(thread.id)
@@ -574,8 +588,13 @@ export function MailList({
         {list.nextPageToken !== null && (
           <div className="flex justify-center px-3 py-3">
             {/* A button, not an infinite scroll: Gmail is rate limited. */}
-            <Button variant="outline" size="xs" disabled={mail.loadingMore} onClick={mail.loadMore}>
-              {mail.loadingMore ? 'Loading…' : 'Load more'}
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={mail.listWorking !== null}
+              onClick={mail.loadMore}
+            >
+              {mail.listWorking === 'more' ? 'Loading…' : 'Load more'}
             </Button>
           </div>
         )}

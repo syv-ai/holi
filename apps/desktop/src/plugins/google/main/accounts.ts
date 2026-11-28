@@ -11,6 +11,7 @@
  *
  * **No `electron` import**, like every file in `google/` except `electron.ts`.
  */
+import { createHash, randomUUID } from 'node:crypto'
 import { GoogleSession, type AccountRef, type GoogleAccount, GOOGLE_SCOPES } from './session'
 import { startLoopbackFlow, type Listen, type LoopbackFlow } from './loopback-flow'
 import {
@@ -19,10 +20,19 @@ import {
   type GoogleClientSource,
   type GoogleClientStore,
 } from './credentials'
-import type { GoogleAccounts, GoogleTokenStore, StoredGoogleAuth } from './token-store'
+import type { GoogleTokenStore, StoredGoogleAuth } from './token-store'
 import type { VaultAccountsStore } from './vault-accounts'
 
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
+const REVOKE_TIMEOUT_MS = 15_000
+const sha256 = (value: string) => createHash('sha256').update(value).digest('hex')
+
+// Kept in the encrypted row itself, so a restart between token and link writes
+// (or after failed cleanup) cannot expose that grant through any vault link.
+// The token store preserves row fields on read. Rows without the marker,
+// including existing installations' rows, are committed.
+type AccountRow = StoredGoogleAuth & { pendingConsent?: true }
+type AccountRows = Record<string, AccountRow>
 
 /** What the settings picker needs: enough to name an account, no tokens. */
 interface ConnectedAccount extends GoogleAccount {
@@ -54,6 +64,12 @@ export interface GoogleAccountsOverview {
   client: { id: string; source: GoogleClientSource }
 }
 
+type GoogleAccountBinding = {
+  session: GoogleSession
+  revision: string
+  isCurrent(): boolean
+}
+
 export interface GoogleAccountsManager {
   /** Every connected account, for the picker. */
   list(): ConnectedAccount[]
@@ -62,6 +78,8 @@ export interface GoogleAccountsManager {
    *  state the UI already renders. */
   sessionFor(remote: string): Promise<GoogleSession | null>
   sessionForSub(sub: string): GoogleSession | null
+  /** Stable for this link and grant only; a token refresh is not a new grant. */
+  bindingFor(remote: string): Promise<GoogleAccountBinding | null>
   /** Full consent, then store the account **and** link it to `remote`. */
   connect(remote: string): Promise<LoopbackFlow>
   cancelConnect(): void
@@ -72,7 +90,7 @@ export interface GoogleAccountsManager {
   unlinkVault(remote: string): Promise<void>
   /** This vault's connection and its state, the one place that works it out. */
   overview(remote: string): Promise<GoogleAccountsOverview>
-  /** Revoke at Google, drop the record, unlink every vault pointing at it. */
+  /** Drop the record and its vault links, then try to revoke at Google. */
   removeAccount(sub: string): Promise<void>
   /** Fires for a connect, a removal, and a dead grant, naming the account that
    *  changed so a cache can be scoped to it. Null when nothing is connected. */
@@ -84,7 +102,12 @@ export interface GoogleAccountsManager {
   ): () => void
   /** The client in use and where it came from. The secret stays in main. */
   client(): { id: string; source: GoogleClientSource }
-  /** Set this machine's future-connect client, or null for environment/shipped. */
+  /**
+   * Set this machine's own client, or `null` to go back to the environment's
+   * or the shipped one. **A grant belongs to the client that made it**, so a
+   * existing grants remain pinned to their issuing client. This changes only
+   * the client used for future consent flows.
+   */
   setClient(own: GoogleClient | null): Promise<void>
 }
 
@@ -106,7 +129,10 @@ export async function createGoogleAccounts(
   deps: GoogleAccountsDeps,
 ): Promise<GoogleAccountsManager> {
   /** The one copy. Sessions reach it through their `AccountRef`, never directly. */
-  let accounts: GoogleAccounts = await deps.store.read()
+  let accounts: AccountRows = await deps.store.read()
+  const revocationFences = await deps.store.readRevocationFences()
+  const hasRevocationFence = (sub: string) =>
+    revocationFences.size > 0 && revocationFences.has(sha256(sub))
   const sessions = new Map<string, GoogleSession>()
   const listeners = new Set<
     (
@@ -114,13 +140,7 @@ export async function createGoogleAccounts(
       reason: 'connected' | 'expired' | 'removed' | 'unlinked',
     ) => void | Promise<void>
   >()
-  let connecting: {
-    id: symbol
-    clientId: string
-    settled: Promise<void>
-    flow: LoopbackFlow | null
-    cancel: () => void
-  } | null = null
+  let connecting: { id: symbol; flow: LoopbackFlow | null; cancel: () => void } | null = null
   const accountEpochs = new Map<string, number>()
   const accountEpoch = (sub: string) => accountEpochs.get(sub) ?? 0
   const advanceAccountEpoch = (sub: string) => {
@@ -128,15 +148,23 @@ export async function createGoogleAccounts(
     accountEpochs.set(sub, next)
     return next
   }
-  /** Bumped by every client change, so a consent that began under the old
-   *  client knows its grant is not this machine's to keep. */
+  /** Bumped when a future consent policy changes, fencing in-flight consent. */
   let clientEpoch = 0
+  const bindingNamespace = randomUUID()
   /** A client change in progress: a connect waits it out rather than starting
    *  under a client about to be replaced. Never rejects. */
   let switching: Promise<void> | null = null
+  // A failed removal stays closed until retry; concurrent removals share the
+  // same cleanup so neither can unlink or revoke a later grant.
+  const removals = new Map<string, { run?: Promise<void>; refreshToken?: string }>()
+  const isRetiring = (sub: string) => removals.has(sub)
   /** The person's own client, loaded once: main is its only writer. */
   let own: GoogleClient | null = (await deps.clients?.read()) ?? null
   const currentClient = () => resolveClient(own, deps.env)
+  // Grants keep the OAuth client that issued them; changing the default only
+  // affects future consent and must never make an existing refresh token unusable.
+  const grantClient = (auth: AccountRow) => auth.client ?? currentClient()
+
   const emit = async (
     sub: string | null,
     reason: 'connected' | 'expired' | 'removed' | 'unlinked' = 'connected',
@@ -144,128 +172,146 @@ export async function createGoogleAccounts(
     await Promise.all([...listeners].map((cb) => cb(sub, reason)))
   }
 
+  // Serialize local token and vault-link mutations together. In particular a
+  // failed consent must retire its links before a newer grant can reuse its sub.
   let writes: Promise<void> = Promise.resolve()
-  let revoking: Promise<void> | null = null
-  const serialize = (operation: () => Promise<void>): Promise<void> => {
+  const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
     const write = writes.then(operation)
-    writes = write.catch(() => undefined)
+    writes = write.then(
+      () => undefined,
+      () => undefined,
+    )
     return write
   }
-  // Legacy records belong to the effective client at startup, even if a later
-  // default change fails. Pin them durably before that default can change.
-  const legacyClient = currentClient()
-  const grantClient = (auth: StoredGoogleAuth) => auth.client ?? legacyClient
-  const persist = (change: (current: GoogleAccounts) => GoogleAccounts): Promise<void> =>
-    serialize(async () => {
-      const next = change(accounts)
-      if (next === accounts) return
-      await deps.store.write(next)
-      accounts = next
-    })
-  // A newer consent owns its token before its queued disk write has landed.
-  const pendingGrants = new Map<
-    string,
-    { refreshToken: string; clientId: string; epoch: number; owner: symbol }
-  >()
-  const revokeUnusedGrant = async (
+  const writeAccounts = async (next: AccountRows) => {
+    await deps.store.write(next)
+    accounts = next
+  }
+  // A consent owns its grant before its queued disk write has landed.
+  const pendingGrants = new Map<string, number>()
+  const hasPendingGrant = (sub: string) => pendingGrants.get(sub) === accountEpoch(sub)
+  const usableAuth = (sub: string): StoredGoogleAuth | undefined => {
+    const row = accounts[sub]
+    return isRetiring(sub) || row?.pendingConsent || hasPendingGrant(sub) || hasRevocationFence(sub)
+      ? undefined
+      : row
+  }
+  // Track the code exchange through ownership of its result, not the time a
+  // person spends in the browser or the later persistence/cleanup work.
+  const exchanges = new Set<Promise<void>>()
+  let revoking: { sub: string; digest: string } | undefined
+  async function revokeUnusedGrant(
+    sub: string,
     refreshToken: string,
-    accountSub: string,
-    clientId: string,
-    owner: symbol,
-  ): Promise<void> => {
+    fromRemoval = false,
+  ): Promise<void> {
     for (;;) {
-      let later: Promise<void> | undefined
-      await serialize(async () => {
-        // A later exchange may have issued tokens before its response arrived.
-        // Re-check at admission, then wait outside the token-write hold.
-        if (connecting !== null && connecting.id !== owner && connecting.clientId === clientId) {
-          later = connecting.settled
-          return
-        }
-        if (Object.values(accounts).some((auth) => auth.refreshToken === refreshToken)) return
-        const existing = accounts[accountSub]
-        if (existing !== undefined && grantClient(existing).id === clientId) return
+      const exchanging = await serialize(async () => {
+        // Another attempt cannot establish that the original request is done.
+        if (hasRevocationFence(sub)) return
+        // Google revokes the subject's entire OAuth project grant, not just
+        // this token or client. We don't know project identity, so even a
+        // different client may share the grant. Protect any live owner here.
+        // https://developers.google.com/identity/protocols/oauth2/native-app#tokenrevoke
+        if (!isRetiring(sub) && (usableAuth(sub) !== undefined || hasPendingGrant(sub))) return
+        // Retiring rows aren't live owners. Delegate the exact credential to
+        // the explicit removal that will take (or has already taken) the row.
         if (
-          [...pendingGrants].some(
-            ([sub, grant]) =>
-              (grant.refreshToken === refreshToken ||
-                (sub === accountSub && grant.clientId === clientId)) &&
-              grant.epoch === accountEpoch(sub) &&
-              grant.owner === connecting?.id,
-          )
+          !fromRemoval &&
+          isRetiring(sub) &&
+          (accounts[sub]?.refreshToken === refreshToken ||
+            removals.get(sub)?.refreshToken === refreshToken)
         )
           return
-        await revoke(refreshToken)
+        if (exchanges.size > 0) return [...exchanges]
+        await revoke(sub, refreshToken)
       })
-      if (later === undefined) return
-      await later
+      if (!exchanging) return
+      // The exchange can queue a write to claim the token. Don't hold the
+      // writer while waiting, and recheck ownership on the next admission.
+      await Promise.all(exchanging)
     }
   }
 
   /** A session's window onto its own row. Writes go through here so the map has
    *  exactly one writer even while several sessions are refreshing. */
-  const refFor = (sub: string): AccountRef => {
+  const refFor = (sub: string, refreshToken: string): AccountRef => {
     const grantEpoch = accountEpoch(sub)
+    const read = () => (accountEpoch(sub) === grantEpoch ? (usableAuth(sub) ?? null) : null)
+    // One refresh at a time per session. Remember its last token even after
+    // the row is gone, so an unrotated reply doesn't schedule another revoke.
+    let lastTokenDigest = sha256(refreshToken)
     return {
-      read: () => (accountEpoch(sub) === grantEpoch ? (accounts[sub] ?? null) : null),
-      generation: () => accountEpoch(sub),
+      read,
+      // Explicit removal and replacement advance the grant epoch before old work can write.
+      generation: () => (read() === null ? -1 : grantEpoch),
       async write(auth, expectedGeneration) {
-        if (accounts[sub] === undefined || accountEpoch(sub) !== expectedGeneration) return
-        await persist((latest) =>
-          latest[sub] === undefined || accountEpoch(sub) !== expectedGeneration
-            ? latest
-            : {
-                ...latest,
-                [sub]: {
-                  ...auth,
-                  client: grantClient(latest[sub]),
-                },
-              },
-        )
+        const digest = sha256(auth.refreshToken)
+        const saved = await serialize(async () => {
+          if (expectedGeneration !== grantEpoch || read() === null) return false
+          await writeAccounts({
+            ...accounts,
+            [sub]: { ...auth, client: grantClient(accounts[sub]!) },
+          })
+          lastTokenDigest = digest
+          return true
+        })
+        // A late rotation minted a credential our retiring session can't keep.
+        // Let the shared revoke path recheck consent ownership outside this write.
+        if (!saved && digest !== lastTokenDigest) await revokeUnusedGrant(sub, auth.refreshToken)
       },
       async remove() {
-        if (accountEpoch(sub) !== grantEpoch) return
-        await dropTokens(sub)
-        await deps.vaults.unlinkAccount(sub)
-        await emit(sub)
+        const removed = await serialize(async () => {
+          if (accountEpoch(sub) !== grantEpoch || usableAuth(sub) === undefined) return false
+          advanceAccountEpoch(sub)
+          await retireLocalAccount(sub)
+          return true
+        })
+        if (removed) await emit(sub)
       },
       async expire(expectedGeneration) {
-        let removed = false
-        await persist((current) => {
-          const row = current[sub]
-          if (row === undefined || accountEpoch(sub) !== expectedGeneration) return current
-          const next = { ...current }
-          delete next[sub]
-          removed = true
-          return next
+        const expired = await serialize(async () => {
+          if (usableAuth(sub) === undefined || accountEpoch(sub) !== expectedGeneration)
+            return false
+          await deleteAccountRow(sub)
+          // An explicit removal that began during the write owns link cleanup.
+          if (removals.has(sub)) return false
+          if (accountEpoch(sub) === expectedGeneration) advanceAccountEpoch(sub)
+          await deps.vaults.expireAccount(sub)
+          return true
         })
-        if (!removed) return
-        advanceAccountEpoch(sub)
-        sessions.delete(sub)
-        await deps.vaults.expireAccount(sub)
-        await emit(sub, 'expired')
+        if (expired) await emit(sub, 'expired')
       },
     }
   }
 
-  const dropTokens = async (sub: string): Promise<void> => {
-    advanceAccountEpoch(sub)
-    await persist((current) => {
-      const next = { ...current }
+  // Only inside the local writer. Keep an uncommitted row as a durable
+  // quarantine until all its links are gone, even if deleting the row fails.
+  async function retireLocalAccount(sub: string): Promise<void> {
+    const pending = accounts[sub]?.pendingConsent
+    if (!pending) await deleteAccountRow(sub)
+    await deps.vaults.unlinkAccount(sub)
+    if (pending) await deleteAccountRow(sub)
+  }
+
+  async function deleteAccountRow(sub: string): Promise<void> {
+    if (accounts[sub] !== undefined) {
+      const next = { ...accounts }
       delete next[sub]
-      return next
-    })
+      await writeAccounts(next)
+    }
     sessions.delete(sub)
   }
 
   /** Memoized: two vaults on one account must share ONE session, because
    *  `#refreshing` is that session's single-flight latch. */
   const sessionForSub = (sub: string): GoogleSession | null => {
-    if (accounts[sub] === undefined) return null
+    const auth = usableAuth(sub)
+    if (auth === undefined) return null
     let session = sessions.get(sub)
     if (session === undefined) {
       session = new GoogleSession({
-        account: refFor(sub),
+        account: refFor(sub, auth.refreshToken),
         client: () => grantClient(accounts[sub]!),
         fetch: deps.fetch,
         now: deps.now,
@@ -277,33 +323,53 @@ export async function createGoogleAccounts(
 
   return {
     list: () =>
-      Object.values(accounts).map((a: StoredGoogleAuth) => ({ sub: a.sub, email: a.email })),
+      Object.entries(accounts).flatMap(([sub, { email }]) =>
+        usableAuth(sub) === undefined ? [] : [{ sub, email }],
+      ),
 
     sessionForSub,
 
     async sessionFor(remote) {
-      const sub = await deps.vaults.subFor(remote)
-      return sub === null ? null : sessionForSub(sub)
+      const binding = await deps.vaults.bindingFor(remote)
+      // A read that races link cleanup must not lend a later grant through
+      // the link that the cleanup just retired.
+      return binding.sub === null || !deps.vaults.isCurrentBinding(remote, binding)
+        ? null
+        : sessionForSub(binding.sub)
+    },
+
+    async bindingFor(remote) {
+      const binding = await deps.vaults.bindingFor(remote)
+      const { sub } = binding
+      // Account and vault revisions fence grants independently of the default
+      // client, whose replacement does not retire an existing authorization.
+      if (sub === null || !deps.vaults.isCurrentBinding(remote, binding)) return null
+      const session = sessionForSub(sub)
+      if (!session?.account) return null
+      const grant = accountEpoch(sub)
+      return {
+        session,
+        revision: createHash('sha256')
+          .update(JSON.stringify([bindingNamespace, remote, sub, binding.revision, grant]))
+          .digest('hex'),
+        isCurrent: () =>
+          deps.vaults.isCurrentBinding(remote, binding) &&
+          accountEpoch(sub) === grant &&
+          sessions.get(sub) === session &&
+          session.accountSub === sub,
+      }
     },
 
     async connect(remote) {
-      let awaited: Promise<void> | null
-      let revoked: Promise<void> | null
+      let queued: Promise<void> | null
       do {
-        awaited = switching
-        revoked = revoking
-        await Promise.all([awaited, revoked])
-      } while (awaited !== switching || revoked !== revoking)
+        queued = switching
+        await queued
+      } while (queued !== switching)
       // Consent is machine-wide: the newest requester owns the one active flow.
       cancelFlow()
       const epoch = clientEpoch
       const startingAccountEpochs = new Map(accountEpochs)
-      const consentClient = currentClient()
-      const { id, secret } = consentClient
-      let settle!: () => void
-      const settled = new Promise<void>((resolve) => {
-        settle = resolve
-      })
       const reservation = {
         id: Symbol('google-connect'),
         flow: null as LoopbackFlow | null,
@@ -311,14 +377,16 @@ export async function createGoogleAccounts(
       }
       connecting = {
         id: reservation.id,
-        clientId: id,
-        settled,
         flow: null,
         cancel: () => {
           reservation.cancelled = true
           reservation.flow?.cancel()
         },
       }
+      const consentClient = currentClient()
+      const { id, secret } = consentClient
+      let finishExchange: (() => void) | undefined
+      let overlappingRevoke: typeof revoking
       let flow: LoopbackFlow
       try {
         flow = await startLoopbackFlow({
@@ -327,99 +395,27 @@ export async function createGoogleAccounts(
           scopes: GOOGLE_SCOPES,
           listen: deps.listen,
           openBrowser: deps.openBrowser,
-          fetch: deps.fetch,
+          fetch(input, init) {
+            overlappingRevoke = revoking
+            const done = new Promise<void>((resolve) => {
+              finishExchange = () => {
+                exchanges.delete(done)
+                resolve()
+              }
+            })
+            exchanges.add(done)
+            return (deps.fetch ?? globalThis.fetch)(input, init)
+          },
           now: deps.now,
         })
       } catch (error) {
         if (connecting?.id === reservation.id) connecting = null
-        settle()
         throw error
       }
       reservation.flow = flow
       if (reservation.cancelled || connecting?.id !== reservation.id) {
         flow.cancel()
-      }
-      const complete = async () => {
-        const result = await flow.wait()
-        if (result.kind !== 'granted') {
-          if (connecting?.id === reservation.id) connecting = null
-          return result
-        }
-
-        const { tokens } = result
-        const stale = () =>
-          reservation.cancelled ||
-          epoch !== clientEpoch ||
-          connecting?.id !== reservation.id ||
-          (startingAccountEpochs.get(tokens.sub) ?? 0) !== accountEpoch(tokens.sub)
-        if (stale()) {
-          await revokeUnusedGrant(tokens.refreshToken, tokens.sub, id, reservation.id)
-          return { kind: 'cancelled' } as const
-        }
-        let accepted = false
-        let uncertain = false
-        pendingGrants.set(tokens.sub, {
-          refreshToken: tokens.refreshToken,
-          clientId: id,
-          epoch: accountEpoch(tokens.sub),
-          owner: reservation.id,
-        })
-        try {
-          await serialize(async () => {
-            if (stale()) return
-            const prior = accounts[tokens.sub]
-            if (prior !== undefined && grantClient(prior).id !== id)
-              throw new Error('this Google account is connected with a different OAuth client')
-            const next = {
-              ...accounts,
-              [tokens.sub]: {
-                sub: tokens.sub,
-                email: tokens.email,
-                refreshToken: tokens.refreshToken,
-                accessToken: tokens.accessToken,
-                expiresAt: tokens.expiresAt,
-                scopes: tokens.scopes,
-                client: prior === undefined ? consentClient : grantClient(prior),
-              },
-            }
-            await deps.store.write(next)
-            let undoLink: (() => Promise<void>) | undefined
-            try {
-              if (stale()) return
-              undoLink = await deps.vaults.link(remote, tokens.sub)
-              if (stale()) return
-              accounts = next
-              advanceAccountEpoch(tokens.sub)
-              sessions.delete(tokens.sub)
-              accepted = true
-            } finally {
-              if (!accepted) {
-                try {
-                  await undoLink?.()
-                  await deps.store.write(accounts)
-                } catch (error) {
-                  // The staged grant may still be durable. Keep it owned,
-                  // notify data handles, and never revoke uncertain tokens.
-                  accounts = next
-                  advanceAccountEpoch(tokens.sub)
-                  sessions.delete(tokens.sub)
-                  uncertain = true
-                  await emit(tokens.sub)
-                  throw error
-                }
-              }
-            }
-          })
-        } finally {
-          if (pendingGrants.get(tokens.sub)?.owner === reservation.id)
-            pendingGrants.delete(tokens.sub)
-          if (!accepted && !uncertain)
-            await revokeUnusedGrant(tokens.refreshToken, tokens.sub, id, reservation.id)
-          if (connecting?.id === reservation.id) connecting = null
-        }
-        if (!accepted) return { kind: 'cancelled' } as const
-        await emit(tokens.sub)
-        return result
+        return { authUrl: flow.authUrl, cancel: () => flow.cancel(), wait: () => flow.wait() }
       }
       const wrapped: LoopbackFlow = {
         authUrl: flow.authUrl,
@@ -434,14 +430,65 @@ export async function createGoogleAccounts(
         wait: () => completion,
       }
       if (connecting?.id === reservation.id)
-        connecting = { id: reservation.id, clientId: id, settled, flow, cancel: wrapped.cancel }
-      const completion = complete()
-      const finished = () => {
+        connecting = { id: reservation.id, flow, cancel: wrapped.cancel }
+      const completion = finishConsent().finally(() => {
         if (connecting?.id === reservation.id) connecting = null
-        settle()
-      }
-      void completion.then(finished, finished)
+      })
+      // Callers still receive the rejection through wait; eager completion must
+      // also own errors before a caller starts awaiting its result.
+      void completion.catch(() => undefined)
       return wrapped
+
+      async function finishConsent(): ReturnType<LoopbackFlow['wait']> {
+        let result: Awaited<ReturnType<LoopbackFlow['wait']>>
+        try {
+          result = await flow.wait()
+        } finally {
+          // No yield between releasing this latch and claiming an accepted
+          // token in commitConsent. A waiting revoke sees that ownership.
+          finishExchange?.()
+        }
+        if (result.kind !== 'granted') return result
+
+        const tokens = { ...result.tokens, client: consentClient }
+        const { sub, refreshToken } = tokens
+        const active = () =>
+          !reservation.cancelled &&
+          connecting?.id === reservation.id &&
+          epoch === clientEpoch &&
+          !isRetiring(sub)
+        const refused = () => {
+          if (active() && hasRevocationFence(sub)) {
+            throw new Error(
+              'Holi cannot verify that an earlier Google revocation is complete. ' +
+                'Use a different Google account on this installation. ' +
+                'To check or remove remaining access, review third-party connections in your Google Account.',
+            )
+          }
+          return { kind: 'cancelled' } as const
+        }
+        if (hasRevocationFence(sub)) return refused()
+        const overlap = overlappingRevoke
+        const overlaps = overlap !== undefined && sub === overlap.sub
+        if (overlaps && sha256(refreshToken) === overlap.digest) return refused()
+        // Even a distinct token from an exchange that overlapped a revoke is
+        // unsafe to publish. Wait for cleanup only on the rejected path.
+        if (overlaps || !active() || (startingAccountEpochs.get(sub) ?? 0) !== accountEpoch(sub)) {
+          await revokeUnusedGrant(sub, refreshToken)
+          return refused()
+        }
+        const existing = usableAuth(sub)
+        if (existing !== undefined && grantClient(existing).id !== consentClient.id)
+          throw new Error('this Google account is connected with a different OAuth client')
+        const previous = { epoch: accountEpoch(sub), session: sessions.get(sub) }
+        const grantEpoch = advanceAccountEpoch(sub)
+        if (!(await commitConsent(remote, tokens, grantEpoch, active, previous)))
+          return { kind: 'cancelled' }
+        if (isRetiring(sub) || epoch !== clientEpoch || accountEpoch(sub) !== grantEpoch)
+          return { kind: 'cancelled' }
+        await emit(sub)
+        return result
+      }
     },
 
     cancelConnect() {
@@ -449,22 +496,29 @@ export async function createGoogleAccounts(
     },
 
     async link(remote, sub) {
-      if (accounts[sub] === undefined) {
-        throw new Error(`that Google account is not connected on this machine (${sub})`)
+      const grant = accountEpoch(sub)
+      const requireGrant = () => {
+        if (usableAuth(sub) === undefined || accountEpoch(sub) !== grant) {
+          throw new Error(`that Google account is not connected on this machine (${sub})`)
+        }
       }
-      await deps.vaults.link(remote, sub)
+      requireGrant()
+      await serialize(async () => {
+        requireGrant()
+        await deps.vaults.link(remote, sub)
+      })
       await emit(sub)
     },
 
     async unlinkVault(remote) {
-      await deps.vaults.unlinkVault(remote)
+      await serialize(() => deps.vaults.unlinkVault(remote))
       await emit(null, 'unlinked')
     },
 
     async overview(remote) {
       const links = await deps.vaults.all()
       const sub = links[remote] ?? null
-      const stored = sub === null ? undefined : accounts[sub]
+      const stored = sub === null ? undefined : usableAuth(sub)
       const { id, source } = stored === undefined ? currentClient() : grantClient(stored)
       const client = { id, source }
       if (sub === null || stored === undefined) {
@@ -519,27 +573,21 @@ export async function createGoogleAccounts(
               { ...auth, client: grantClient(auth) },
             ]),
           )
-          // Pin legacy provenance independently: even a rejected default save
-          // must not reinterpret an old grant using a later startup default.
-          await deps.store.write(pinned)
-          accounts = pinned
+          // Preserve existing grants before publishing a different default.
+          await writeAccounts(pinned)
           const migrated = Object.fromEntries(
             Object.entries(pinned).map(([sub, auth]) => [
               sub,
-              {
-                ...auth,
-                client: auth.client.id === replacement.id ? replacement : auth.client,
-              },
+              { ...auth, client: auth.client.id === replacement.id ? replacement : auth.client },
             ]),
           )
-          await deps.store.write(migrated)
+          await writeAccounts(migrated)
           try {
             await clients.write(next)
           } catch (error) {
-            await deps.store.write(pinned)
+            await writeAccounts(pinned)
             throw error
           }
-          accounts = migrated
           own = next
         }),
       )
@@ -551,48 +599,186 @@ export async function createGoogleAccounts(
     },
   }
 
+  async function commitConsent(
+    remote: string,
+    tokens: StoredGoogleAuth,
+    grantEpoch: number,
+    active: () => boolean,
+    previous: { epoch: number; session: GoogleSession | undefined },
+  ): Promise<boolean> {
+    const { sub, refreshToken } = tokens
+    const stillOwned = () => active() && accountEpoch(sub) === grantEpoch
+    const restoreOwnership = () => {
+      if (isRetiring(sub) || accountEpoch(sub) !== grantEpoch) return
+      accountEpochs.set(sub, previous.epoch)
+      if (previous.session !== undefined) sessions.set(sub, previous.session)
+    }
+    pendingGrants.set(sub, grantEpoch)
+    const unused = new Set([refreshToken])
+    let publicationUncertain = false
+    try {
+      return await serialize(async () => {
+        if (!stillOwned()) {
+          restoreOwnership()
+          return false
+        }
+        const abandoned = accounts[sub]
+        if (
+          abandoned !== undefined &&
+          !abandoned.pendingConsent &&
+          grantClient(abandoned).id !== tokens.client?.id
+        ) {
+          throw new Error('this Google account is connected with a different OAuth client')
+        }
+        if (abandoned?.pendingConsent) {
+          // Never reactivate an abandoned link by overwriting its quarantined row.
+          await retireLocalAccount(sub)
+          unused.add(abandoned.refreshToken)
+        } else if (abandoned === undefined) {
+          const links = await deps.vaults.all()
+          if (!stillOwned()) return false
+          // A failed removal can leave links on disk after deleting the row.
+          // Retire them before staging any grant that could authorize them.
+          if (Object.values(links).includes(sub)) await retireLocalAccount(sub)
+        }
+        if (!stillOwned()) return false
+        const priorAccounts = accounts
+        sessions.delete(sub)
+        publicationUncertain = true
+        await writeAccounts({ ...accounts, [sub]: { ...tokens, pendingConsent: true } })
+        let undoLink: (() => Promise<void>) | undefined
+        let committed = false
+        try {
+          if (stillOwned()) {
+            undoLink = await deps.vaults.link(remote, sub)
+            if (stillOwned()) {
+              // Once the link has succeeded, starting this atomic write commits
+              // consent. Removal and client replacement drain it before retiring.
+              await writeAccounts({ ...accounts, [sub]: tokens })
+              committed = true
+              publicationUncertain = false
+              unused.delete(refreshToken)
+              return true
+            }
+          }
+        } catch (error) {
+          try {
+            if (!isRetiring(sub)) {
+              await undoLink?.()
+              await writeAccounts(priorAccounts)
+              restoreOwnership()
+              publicationUncertain = false
+            }
+          } catch (cleanupError) {
+            throw new AggregateError(
+              [error, cleanupError],
+              'Could not finish or retire Google consent',
+            )
+          }
+          throw error
+        }
+        // Restore the previous durable owner unless an explicit retirement took over.
+        if (!committed && !isRetiring(sub)) {
+          await undoLink?.()
+          await writeAccounts(priorAccounts)
+          restoreOwnership()
+          publicationUncertain = false
+        }
+        return false
+      })
+    } finally {
+      // This transaction no longer owns its unused tokens. Only another
+      // owner can protect them, not this transaction's quarantined row.
+      if (pendingGrants.get(sub) === grantEpoch) pendingGrants.delete(sub)
+      // A failed rollback can leave durable authorization we cannot classify.
+      // Revocation affects the whole Google project, including the prior owner.
+      if (!publicationUncertain) for (const token of unused) await revokeUnusedGrant(sub, token)
+    }
+  }
+
   function cancelFlow(): void {
     const active = connecting
     connecting = null
     active?.cancel()
   }
 
-  /** Revoking needs only the token, so it works whatever the client. A failed
-   *  revoke is swallowed: see `removeAccount`. */
-  async function revoke(refreshToken: string): Promise<void> {
-    const previous = revoking
-    const request = (previous ?? Promise.resolve()).then(async () => {
-      await (deps.fetch ?? globalThis.fetch)(REVOKE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: refreshToken }).toString(),
-        signal: AbortSignal.timeout(30_000),
-      }).catch(() => undefined)
-    })
-    revoking = request.catch(() => undefined)
-    await revoking
+  /** Only inside the writer, after ownership has been checked. */
+  async function revoke(sub: string, refreshToken: string): Promise<void> {
+    const subjectDigest = sha256(sub)
+    revoking = { sub, digest: sha256(refreshToken) }
+    try {
+      // Record the potential project-wide effect before sending anything, so
+      // even quitting mid-request cannot make a later consent look safe.
+      const releaseFence = await deps.store.beginRevocation(subjectDigest)
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), REVOKE_TIMEOUT_MS)
+      let settled = false
+      try {
+        const response = await (deps.fetch ?? globalThis.fetch)(REVOKE_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ token: refreshToken }).toString(),
+          signal: controller.signal,
+        })
+        settled = response.status === 200
+        if (response.status === 400 && !controller.signal.aborted) {
+          // Google's invalid-token refusal did not revoke the project grant.
+          // An unrecognized error or unreadable response is not that refusal.
+          const body: unknown = await response.json()
+          settled =
+            body !== null &&
+            typeof body === 'object' &&
+            'error' in body &&
+            body.error === 'invalid_token'
+        }
+      } catch {
+        // Aborting ends the wait here, not the operation at Google.
+      } finally {
+        clearTimeout(timer)
+      }
+      if (settled && !controller.signal.aborted) {
+        try {
+          await releaseFence()
+          return
+        } catch {
+          // If the marker could not be cleared, keep the same fence on disk
+          // and in memory rather than changing behavior after a restart.
+        }
+      }
+      revocationFences.add(subjectDigest)
+    } finally {
+      revoking = undefined
+    }
   }
 
-  async function revokeAccount(sub: string): Promise<void> {
-    const auth = accounts[sub]
-    if (auth !== undefined) await revoke(auth.refreshToken)
-  }
-
-  async function removeAccount(sub: string): Promise<void> {
-    // Invalidate consent/refresh immediately, even before the first disk write.
-    // Deletion must still queue behind a write that already accepted this grant.
+  function removeAccount(sub: string): Promise<void> {
+    const removal = removals.get(sub) ?? {}
+    if (removal.run !== undefined) return removal.run
+    removals.set(sub, removal)
     advanceAccountEpoch(sub)
-    // Revoking server-side is the point: dropping only the local copy leaves a
-    // live grant on someone's Google account with nothing in Holi to show for
-    // it. A failed revoke still clears locally: the user asked for this, and
-    // refusing because Google is unreachable would trap them.
-    await revokeAccount(sub)
-    await dropAccount(sub)
-  }
-
-  async function dropAccount(sub: string): Promise<void> {
-    await dropTokens(sub)
-    await deps.vaults.unlinkAccount(sub)
-    await emit(sub, 'removed')
+    pendingGrants.delete(sub)
+    const run = async () => {
+      // Capture the latest durable grant, including a consent or rotation
+      // whose disk write was already in flight. Retire it locally before any
+      // network wait so a restart cannot lend it to a surviving vault link.
+      await serialize(async () => {
+        const auth = accounts[sub]
+        if (auth !== undefined) removal.refreshToken = auth.refreshToken
+        await retireLocalAccount(sub)
+      })
+      if (removal.refreshToken !== undefined) {
+        await revokeUnusedGrant(sub, removal.refreshToken, true)
+        delete removal.refreshToken
+      }
+      await emit(sub, 'removed')
+      // Consent started during this removal is stale too. New consent must
+      // start after the old grant and its links have both been retired.
+      advanceAccountEpoch(sub)
+      removals.delete(sub)
+    }
+    removal.run = run().finally(() => {
+      delete removal.run
+    })
+    return removal.run
   }
 }

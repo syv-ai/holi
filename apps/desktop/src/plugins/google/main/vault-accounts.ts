@@ -17,12 +17,17 @@ import { jsonFileStore } from '../../../main/plugin-api'
 /** `owner/repo` → Google's stable account id (`sub`). */
 type VaultAccounts = Record<string, string>
 
+type VaultAccountBinding = { sub: string | null; revision: number }
+
 export interface VaultAccountsStore {
   /** The account this vault uses, or null for one that has never connected. */
   subFor(remote: string): Promise<string | null>
+  /** Coherent snapshot of the mapping and its main-process publication revision. */
+  bindingFor(remote: string): Promise<VaultAccountBinding>
+  /** Revalidate a snapshot from bindingFor for the same remote. Does not yield. */
+  isCurrentBinding(remote: string, binding: VaultAccountBinding): boolean
   /** Snapshot, for the settings UI and for `unlinkAccount`. */
   all(): Promise<VaultAccounts>
-  /** Returns an owner-bound rollback for a consent cancelled after linking. */
   link(remote: string, sub: string): Promise<() => Promise<void>>
   /** Forget this vault's choice. The account and its tokens are untouched: a
    *  vault unlinking must never cost another vault its connection. */
@@ -66,13 +71,6 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
     queue = run.catch(() => undefined)
     return run
   }
-  /** Only when there is one to clear: most machines never lose a grant. */
-  const clearExpired = async (drop: (remote: string, sub: string) => boolean) => {
-    const current = await expired.read()
-    if (Object.entries(current).some(([remote, sub]) => drop(remote, sub))) {
-      await expired.update((latest) => without(latest, drop))
-    }
-  }
   const owners = new Map<string, symbol>()
   const restore = (current: VaultAccounts, remote: string, previous: string | undefined) => {
     const next = { ...current }
@@ -80,10 +78,48 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
     else next[remote] = previous
     return next
   }
+  const revisions = new Map<string, number>()
+  const revisionOf = (remote: string) => revisions.get(remote) ?? 0
+  const publish = (change: (current: VaultAccounts) => VaultAccounts, relink?: string) => {
+    let changed: string[] = []
+    return store.update(
+      (current) => {
+        const next = change(current)
+        changed = [...new Set([...Object.keys(current), ...Object.keys(next)])].filter(
+          (remote) => current[remote] !== next[remote] || remote === relink,
+        )
+        return next
+      },
+      undefined,
+      () => {
+        // The store renames synchronously after this guard. Invalidate at
+        // publication, not when the surrounding async operation finishes.
+        for (const remote of changed) revisions.set(remote, revisionOf(remote) + 1)
+        return true
+      },
+    )
+  }
+  /** Only when there is one to clear: most machines never lose a grant. */
+  const clearExpired = async (drop: (remote: string, sub: string) => boolean) => {
+    const current = await expired.read()
+    if (Object.entries(current).some(([remote, sub]) => drop(remote, sub))) {
+      await expired.update((latest) => without(latest, drop))
+    }
+  }
   return {
     all: store.read,
     async subFor(remote) {
       return (await store.read())[remote] ?? null
+    },
+    async bindingFor(remote) {
+      for (;;) {
+        const revision = revisionOf(remote)
+        const sub = (await store.read())[remote] ?? null
+        if (revision === revisionOf(remote)) return { sub, revision }
+      }
+    },
+    isCurrentBinding(remote, binding) {
+      return revisionOf(remote) === binding.revision
     },
     async link(remote, sub) {
       const owner = Symbol('google-vault-link')
@@ -92,11 +128,18 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
       await serial(async () => {
         previous = (await store.read())[remote]
         previousExpired = (await expired.read())[remote]
-        await store.update((current) => ({ ...current, [remote]: sub }))
+        await publish((current) => ({ ...current, [remote]: sub }), remote)
         try {
           await clearExpired((key) => key === remote)
         } catch (error) {
-          await store.update((current) => restore(current, remote, previous))
+          // Fail closed: do not advertise a link whose expired marker could
+          // not be cleared, and preserve the original failure if rollback fails.
+          try {
+            await publish((current) => restore(current, remote, previous), remote)
+          } catch {
+            // The mapping store itself is failing; callers must treat link as
+            // failed and never publish a connected session.
+          }
           throw error
         }
         owners.set(remote, owner)
@@ -104,15 +147,19 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
       return () =>
         serial(async () => {
           if (owners.get(remote) !== owner) return
-          await store.update((current) => restore(current, remote, previous))
-          await expired.update((current) => restore(current, remote, previousExpired))
+          // Roll back only while this transaction still owns the published
+          // value; never undo a later successful link or unlink.
+          if ((await store.read())[remote] === sub) {
+            await publish((current) => restore(current, remote, previous), remote)
+            await expired.update((current) => restore(current, remote, previousExpired))
+          }
           owners.delete(remote)
         })
     },
     unlinkVault(remote) {
       return serial(async () => {
         owners.delete(remote)
-        await store.update((current) => without(current, (key) => key === remote))
+        await publish((current) => without(current, (key) => key === remote))
         await clearExpired((key) => key === remote)
       })
     },
@@ -120,7 +167,7 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
       return serial(async () => {
         for (const [remote, value] of Object.entries(await store.read()))
           if (value === sub) owners.delete(remote)
-        await store.update((current) => without(current, (_, value) => value === sub))
+        await publish((current) => without(current, (_, value) => value === sub))
         await clearExpired((_, value) => value === sub)
       })
     },
@@ -133,7 +180,7 @@ export function createVaultAccounts(path: string): VaultAccountsStore {
           ...current,
           ...Object.fromEntries(lost.map((remote) => [remote, sub])),
         }))
-        await store.update((current) => without(current, (_, value) => value === sub))
+        await publish((current) => without(current, (_, value) => value === sub))
       })
     },
     async needsReconnect(remote) {

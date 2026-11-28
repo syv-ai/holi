@@ -8,6 +8,7 @@ import {
   PaperclipIcon,
   SquarePlusIcon,
 } from 'lucide-react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -26,6 +27,7 @@ import { messageStamp } from '../mail-stamp'
 import type { MailAddress, MailAttachment, ThreadMessage } from '../mail-types'
 import { SandboxedHtml } from '../sandboxed-html'
 import { fileSize, initialsOf } from './data'
+import { MailInvitation } from './mail-invitation'
 import type { MailState } from './use-mail'
 import { openExternal } from '@/plugin-api'
 
@@ -118,6 +120,28 @@ export function MailReader({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="flex flex-col px-4 pb-8">
+        {mail.threadRefreshing ? (
+          <div role="status" aria-label="Refreshing the thread" className="py-4">
+            <Skeleton className="h-5 w-1/2" />
+          </div>
+        ) : mail.threadError !== null ? (
+          <Alert variant="destructive">
+            <AlertTitle>Couldn’t refresh this thread</AlertTitle>
+            <AlertDescription>
+              <p className="break-words">{mail.threadError}</p>
+              <Button type="button" variant="outline" size="xs" onClick={mail.reloadThread}>
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : visible ? (
+          <MailInvitation
+            thread={thread}
+            hasInvite={mail.openRow?.hasInvite === true}
+            generation={mail.threadGeneration}
+            isCurrentGeneration={mail.isCurrentThreadGeneration}
+          />
+        ) : null}
         {thread.messages.map((message, index) => (
           <MessageBlock
             key={message.id}

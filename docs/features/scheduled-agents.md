@@ -225,10 +225,13 @@ says what the approved schedules listen for (`interest`), and a source does only
   ordinary note that a `file` trigger's glob can match.
 - **`calendar`** is Google's: the timed events from an hour ago to a day ahead on the vault's
   calendars, all-day events left out, read every 5 minutes. With no account the list is empty.
-- **`mail`** is Google's too: each query, every 5 minutes, through the mail cache's `history.list`
-  delta (one request when nothing is new). A thread fires when it is new to the query or its latest
-  message is, and not when that message is the person's own, so a reply a run drafts and the person
-  sends does not start the next run. The first look after a start is the baseline.
+- **`mail`** is Google's too: every 5 minutes, a fresh first page of up to 25 threads
+  per query, without rebasing the mail readers' history cursors. A thread fires when
+  it is new to the query or its latest message is, and not when that message is the
+  person's own, so a reply a run drafts and the person sends does not start the next
+  run. The first look after a start is the baseline. Unreadable threads retain their
+  baseline; one unreadable at the first look establishes its version quietly when
+  it becomes readable.
 
 Google polls only while some approved schedule listens for mail or the calendar, and only the open
 vault's account. The automations plugin tells its interest every check and says it is gone when it leaves the
