@@ -562,4 +562,13 @@ jobs:
 
       - name: Test
         # Leave CPU capacity for the serial filesystem/git suite beside jsdom.
-        run: pnpm test --maxWorkers=2
+        run: node scripts/ci-test-runner.mjs "$RUNNER_TEMP/holi-test-diagnostics" pnpm test --maxWorkers=2
+
+      - name: Upload test runner diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-runner-diagnostics-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/holi-test-diagnostics/
+          retention-days: 7
+          if-no-files-found: error
