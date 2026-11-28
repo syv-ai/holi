@@ -6,6 +6,7 @@ import { emptyVaultSnapshot, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import type { TrpcOpWire } from '../src/renderer/src/lib/ipc-link'
 import { installAppMenu } from '../src/main/menu'
 import { DEFAULT_MAIL_MARKER_PREFERENCES } from '../src/plugins/google/shared/mail-markers'
+import type { MailAttentionSnapshot } from '../src/plugins/google/shared/types'
 
 const root = process.env.HOLI_600_ROOT!
 const evidence = process.env.HOLI_600_EVIDENCE!
@@ -51,6 +52,14 @@ function capability(name: string, params: Record<string, unknown>): unknown {
       return { threads: [], nextPageToken: null, syncedAt: null }
     case 'google.mailCounts':
       return { unread: 0, total: 0 }
+    case 'google.mailAttention':
+      return {
+        accountSub: account.sub,
+        unreadThreads: 0,
+        status: 'fresh',
+        revision: 1,
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      } satisfies MailAttentionSnapshot
     case 'google.mailMarkerPreferences':
       return DEFAULT_MAIL_MARKER_PREFERENCES
     case 'google.sendAs':
